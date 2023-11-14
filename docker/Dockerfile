@@ -19,12 +19,15 @@ RUN   if [ "x$(nproc)" = "x1" ] ; then export USE_PROC=1 ; \
       ros-${ROS_DISTRO}-tf && \
       rm -rf /var/lib/apt/lists/* && \
       # Build and install Ceres
-      git clone https://ceres-solver.googlesource.com/ceres-solver && \
+#      git clone https://ceres-solver.googlesource.com/ceres-solver && \
+      git clone https://github.com/ceres-solver/ceres-solver.git && \
       cd ceres-solver && \
       git checkout tags/${CERES_VERSION} && \
       mkdir build && cd build && \
       cmake .. && \
-      make -j$(USE_PROC) install && \
+      # 编译时不用j，用j可能失败
+#      make -j$(USE_PROC) install && \
+      make install && \
       rm -rf ../../ceres-solver && \
       mkdir -p $CATKIN_WS/src/VINS-Mono/
 
@@ -44,3 +47,5 @@ RUN catkin config \
     catkin build && \
     sed -i '/exec "$@"/i \
             source "/root/catkin_ws/devel/setup.bash"' /ros_entrypoint.sh
+#            source "~/catkin_ws/devel/setup.zsh"' /ros_entrypoint.sh
+

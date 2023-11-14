@@ -16,7 +16,11 @@ find_package(catkin REQUIRED COMPONENTS
   message_filters
   camera_model
 )
+
+#设置cv_bridge的搜索路径
+#set(cv_bridge_DIR /usr/local/share/cv_bridge/cmake)
 find_package(OpenCV REQUIRED)
+message(WARNING "OpenCV_VERSION: ${OpenCV_VERSION}")
 
 catkin_package(
 

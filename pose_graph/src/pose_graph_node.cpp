@@ -174,7 +174,7 @@ void imu_forward_callback(const nav_msgs::Odometry::ConstPtr &forward_msg)
 
         cameraposevisual.reset();
         cameraposevisual.add_pose(vio_t_cam, vio_q_cam);
-        cameraposevisual.publish_by(pub_camera_pose_visual, forward_msg->header);
+        cameraposevisual.publish_by(pub_camera_pose_visual, forward_msg->header);//博客中说：如果为1则接收IMU前向递推的角度预测值，经回环的偏移矫正并转换为世界坐标系下的相机姿态，发布
     }
 }
 void relo_relative_pose_callback(const nav_msgs::Odometry::ConstPtr &pose_msg)
@@ -458,7 +458,7 @@ int main(int argc, char **argv)
     posegraph.registerPub(n);
 
     // read param
-    n.getParam("visualization_shift_x", VISUALIZATION_SHIFT_X);
+    n.getParam("visualization_shift_x", VISUALIZATION_SHIFT_X);//这是launch文件中定义的pose graph优化后的坐标的偏移量
     n.getParam("visualization_shift_y", VISUALIZATION_SHIFT_Y);
     n.getParam("skip_cnt", SKIP_CNT);
     n.getParam("skip_dis", SKIP_DIS);
@@ -526,7 +526,7 @@ int main(int argc, char **argv)
 
     fsSettings.release();
 
-    ros::Subscriber sub_imu_forward = n.subscribe("/vins_estimator/imu_propagate", 2000, imu_forward_callback);
+    ros::Subscriber sub_imu_forward = n.subscribe("/vins_estimator/imu_propagate", 2000, imu_forward_callback);//訂閱消息和回调函数
     ros::Subscriber sub_vio = n.subscribe("/vins_estimator/odometry", 2000, vio_callback);
     ros::Subscriber sub_image = n.subscribe(IMAGE_TOPIC, 2000, image_callback);
     ros::Subscriber sub_pose = n.subscribe("/vins_estimator/keyframe_pose", 2000, pose_callback);

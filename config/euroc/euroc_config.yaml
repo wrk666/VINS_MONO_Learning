@@ -3,7 +3,7 @@
 #common parameters
 imu_topic: "/imu0"
 image_topic: "/cam0/image_raw"
-output_path: "/home/shaozu/output/"
+output_path: "/home/shaozu/output/" #输出文件的路径
 
 #camera calibration 
 model_type: PINHOLE
@@ -21,6 +21,7 @@ projection_parameters:
    cx: 3.630e+02
    cy: 2.481e+02
 
+# 选择是否需要外参Tbc标定，如果需要，则给出初始值（外参对VINS系统的精度影响还挺大）
 # Extrinsic parameter between IMU and Camera.
 estimate_extrinsic: 0   # 0  Have an accurate extrinsic parameters. We will trust the following imu^R_cam, imu^T_cam, don't change it.
                         # 1  Have an initial guess about extrinsic parameters. We will optimize around your initial guess.
@@ -42,18 +43,18 @@ extrinsicTranslation: !!opencv-matrix
    data: [-0.0216401454975,-0.064676986768, 0.00981073058949]
 
 #feature traker paprameters
-max_cnt: 150            # max feature number in feature tracking
-min_dist: 30            # min distance between two features 
+max_cnt: 150            # max feature number in feature tracking（KLT时需要保持的特征点数量，增大在一定条件下可提高跟踪的鲁棒性，但如果纹理不丰富则可能导致特征点不够鲁棒）
+min_dist: 30            # min distance between two features 控制特征的分布的稀疏性，大则会使特征点分布较为均匀，当特惠装呢个较为明显时可以减小该值使特征聚集在特征明显之处
 freq: 10                # frequence (Hz) of publish tracking result. At least 10Hz for good estimation. If set 0, the frequence will be same as raw image 
-F_threshold: 1.0        # ransac threshold (pixel)
-show_track: 1           # publish tracking image as topic
-equalize: 1             # if image is too dark or light, trun on equalize to find enough features
-fisheye: 0              # if using fisheye, trun on it. A circle mask will be loaded to remove edge noisy points
+F_threshold: 1.0        # ransac threshold (pixel)  RANSAC的阈值，点距离极线的距离大于这个阈值就被认为是outlier，不会被用于计算Fundamential Matrix
+show_track: 1           # publish tracking image as topic  发布被track上的img
+equalize: 1             # if image is too dark or light, trun on equalize to find enough features 如果图像整体太暗或者太亮则需要进行直方图均衡化
+fisheye: 0              # if using fisheye, trun on it. A circle mask will be loaded to remove edge noisy points  鱼眼相机一般需要圆形的mask，以去除外部噪声点
 
 #optimization parameters
-max_solver_time: 0.04  # max solver itration time (ms), to guarantee real time
+max_solver_time: 0.04  # max solver itration time (ms), to guarantee real time 对最大solve时间和最大迭代次数进行限制，以保证实时性
 max_num_iterations: 8   # max solver itrations, to guarantee real time
-keyframe_parallax: 10.0 # keyframe selection threshold (pixel)
+keyframe_parallax: 10.0 # keyframe selection threshold (pixel) 通过计算每一个点跟踪次数和它在次新帧和次次新帧间的视差确定是否是关键帧
 
 #imu parameters       The more accurate parameters you provide, the better performance
 acc_n: 0.08          # accelerometer measurement noise standard deviation. #0.2   0.04
@@ -64,19 +65,19 @@ g_norm: 9.81007     # gravity magnitude
 
 #loop closure parameters
 loop_closure: 1                    # start loop closure
-load_previous_pose_graph: 0        # load and reuse previous pose graph; load from 'pose_graph_save_path'
+load_previous_pose_graph: 0        # load and reuse previous pose graph; load from 'pose_graph_save_path' 进行map reuse时使用，与之前的pose graph进行融合
 fast_relocalization: 0             # useful in real-time and large project
 pose_graph_save_path: "/home/shaozu/output/pose_graph/" # save and load path
 
 #unsynchronization parameters
-estimate_td: 0                      # online estimate time offset between camera and imu
-td: 0.0                             # initial value of time offset. unit: s. readed image clock + td = real image clock (IMU clock)
+estimate_td: 0                      # online estimate time offset between camera and imu  IMU和camera的时间偏移(以IMU为准)，1则进行估计
+td: 0.0                             # initial value of time offset. unit: s. readed image clock + td = real image clock (IMU clock) 在视觉残差中对time_offset进行非线性优化（VINS-MONO论文  里面好像没有提及时间戳补偿的部分）
 
 #rolling shutter parameters
 rolling_shutter: 0                  # 0: global shutter camera, 1: rolling shutter camera
 rolling_shutter_tr: 0               # unit: s. rolling shutter read out time per frame (from data sheet). 
 
 #visualization parameters
-save_image: 1                   # save image in pose graph for visualization prupose; you can close this function by setting 0 
-visualize_imu_forward: 0        # output imu forward propogation to achieve low latency and high frequence results
+save_image: 1                   # save image in pose graph for visualization prupose; you can close this function by setting 0  # 保存在位姿图中的图像，为0则关闭
+visualize_imu_forward: 0        # output imu forward propogation to achieve low latency and high frequence results  输出IMU前向递推的角度预测值，一般用于低延迟和高频率的应用要求下(比如论文中的8字形follow就要求实时性高)
 visualize_camera_size: 0.4      # size of camera marker in RVIZ

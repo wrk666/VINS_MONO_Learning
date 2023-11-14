@@ -41,7 +41,7 @@ int FeatureManager::getFeatureCount()
     return cnt;
 }
 
-
+//通过计算每一个点跟踪次数和它在次新帧和次次新帧间的视差确定是否是关键帧
 bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, double td)
 {
     ROS_DEBUG("input feature: %d", (int)image.size());
@@ -51,7 +51,7 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
     last_track_num = 0;
     for (auto &id_pts : image)
     {
-        FeaturePerFrame f_per_fra(id_pts.second[0].second, td);
+        FeaturePerFrame f_per_fra(id_pts.second[0].second, td);//取第1个camera(即[0])的的特征，这里只取0是因为只有一个camera, camera_id只有0
 
         int feature_id = id_pts.first;
         auto it = find_if(feature.begin(), feature.end(), [feature_id](const FeaturePerId &it)
@@ -77,17 +77,19 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
     for (auto &it_per_id : feature)
     {
         if (it_per_id.start_frame <= frame_count - 2 &&
-            it_per_id.start_frame + int(it_per_id.feature_per_frame.size()) - 1 >= frame_count - 1)
+            it_per_id.start_frame + int(it_per_id.feature_per_frame.size()) - 1 >= frame_count - 1) //后一个判断条件是什么意思？
         {
             parallax_sum += compensatedParallax2(it_per_id, frame_count);
             parallax_num++;
         }
     }
 
+    //如果没有共视点则肯定是new KF
     if (parallax_num == 0)
     {
         return true;
     }
+    //若有共视点则判断平均共视点是否大于阈值MIN_PARALLAX，若大于，则视为new KF
     else
     {
         ROS_DEBUG("parallax_sum: %lf, parallax_num: %d", parallax_sum, parallax_num);

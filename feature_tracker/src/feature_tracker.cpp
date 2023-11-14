@@ -63,6 +63,7 @@ void FeatureTracker::setMask()
             forw_pts.push_back(it.second.first);
             ids.push_back(it.second.second);
             track_cnt.push_back(it.first);
+            //MIN_DST是两个相邻特征之间像素的最小间隔，目的是保证图像中均匀的特征分布，set mask即将mask中it.second.first(圆心)半径为MIN_DIST的区域设置为0，后面就不会再选取该区域内的点
             cv::circle(mask, it.second.first, MIN_DIST, 0, -1);
         }
     }
@@ -84,6 +85,7 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
     TicToc t_r;
     cur_time = _cur_time;
 
+    // 如果图像整体太暗或者太亮则需要进行直方图均衡化
     if (EQUALIZE)
     {
         cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(3.0, cv::Size(8, 8));
@@ -137,7 +139,7 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
 
         ROS_DEBUG("detect feature begins");
         TicToc t_t;
-        int n_max_cnt = MAX_CNT - static_cast<int>(forw_pts.size());
+        int n_max_cnt = MAX_CNT - static_cast<int>(forw_pts.size());//计算在新的Frame上是否还需要提取特征点，若forw_pts已经足够则不要重新提取
         if (n_max_cnt > 0)
         {
             if(mask.empty())

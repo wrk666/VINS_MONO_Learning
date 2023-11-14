@@ -47,6 +47,8 @@ bool ProjectionTdFactor::Evaluate(double const *const *parameters, double *resid
 
     double td = parameters[4][0];
 
+    // 这里的td_i和td_j和速度i，j分别是如何计算的？是什么意义？速度是我理解的那样的特征点的速度吗？每个track到的特征点单独计算？
+    // TR应该是曝光完一帧img所需的时间，根据行数就得到了这一行开始时的曝光时间，然后计算就看不懂了。
     Eigen::Vector3d pts_i_td, pts_j_td;
     pts_i_td = pts_i - (td - td_i + TR / ROW * row_i) * velocity_i;
     pts_j_td = pts_j - (td - td_j + TR / ROW * row_j) * velocity_j;

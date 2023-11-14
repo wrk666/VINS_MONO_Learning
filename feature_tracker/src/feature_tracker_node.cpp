@@ -47,8 +47,8 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
         return;
     }
     last_image_time = img_msg->header.stamp.toSec();
-    // frequency control
-    if (round(1.0 * pub_count / (img_msg->header.stamp.toSec() - first_image_time)) <= FREQ)
+    // frequency control 控制图像跟踪的发布频率
+    if (round(1.0 * pub_count / (img_msg->header.stamp.toSec() - first_image_time)) <= FREQ)//数量 / 时间 = 频率
     {
         PUB_THIS_FRAME = true;
         // reset the frequency control

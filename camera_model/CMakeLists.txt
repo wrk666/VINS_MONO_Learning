@@ -13,7 +13,10 @@ find_package(catkin REQUIRED COMPONENTS
 find_package(Boost REQUIRED COMPONENTS filesystem program_options system)
 include_directories(${Boost_INCLUDE_DIRS})
 
+#设置cv_bridge的搜索路径
+set(cv_bridge_DIR /usr/local/share/cv_bridge/cmake)
 find_package(OpenCV REQUIRED)
+message(WARNING "OpenCV_VERSION: ${OpenCV_VERSION}")
 
 # set(EIGEN_INCLUDE_DIR "/usr/local/include/eigen3")
 find_package(Ceres REQUIRED)

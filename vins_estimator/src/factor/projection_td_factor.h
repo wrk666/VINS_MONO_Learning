@@ -7,6 +7,7 @@
 #include "../utility/tic_toc.h"
 #include "../parameters.h"
 
+//这是ceres的写法，构建factor
 class ProjectionTdFactor : public ceres::SizedCostFunction<2, 7, 7, 7, 1, 1>
 {
   public:
