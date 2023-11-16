@@ -42,7 +42,7 @@ void FeatureTracker::setMask()
     
 
     // prefer to keep features that are tracked for long time
-    vector<pair<int, pair<cv::Point2f, int>>> cnt_pts_id;
+    vector<pair<int, pair<cv::Point2f, int>>> cnt_pts_id;//外层：键：track次数；值：<feature坐标，feature id>
 
     for (unsigned int i = 0; i < forw_pts.size(); i++)
         cnt_pts_id.push_back(make_pair(track_cnt[i], make_pair(forw_pts[i], ids[i])));
@@ -58,6 +58,7 @@ void FeatureTracker::setMask()
 
     for (auto &it : cnt_pts_id)
     {
+        //前面按照tracking次数进行了排序，先对track次数多的点进行mask set，后面某个次数低的如果在某个mask内，会被直接抛弃掉，留下来的都是tracking次数多的
         if (mask.at<uchar>(it.second.first) == 255)
         {
             forw_pts.push_back(it.second.first);
@@ -74,11 +75,12 @@ void FeatureTracker::addPoints()
     for (auto &p : n_pts)
     {
         forw_pts.push_back(p);
-        ids.push_back(-1);
+        ids.push_back(-1);//b.z()新feature被置为-1，在前端处理完成之后，publish之前会updateID，遍历到-1的就会赋值给当前的feature总数+1
         track_cnt.push_back(1);
     }
 }
 
+//亮度均衡，提取harris角点，KLT tracking，去畸变
 void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
 {
     cv::Mat img;
@@ -96,11 +98,11 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
     else
         img = _img;
 
-    if (forw_img.empty())
+    if (forw_img.empty())//如果是空则证明是第一次read，赋给forw，并给prev_img，cur_img以防后面访问空
     {
         prev_img = cur_img = forw_img = img;
     }
-    else
+    else//否则说明之前就已经有图像读入，直接更新最新帧forw_img，与cur_imh一起进行KLT tracking
     {
         forw_img = img;
     }
@@ -112,11 +114,17 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
         TicToc t_o;
         vector<uchar> status;
         vector<float> err;
+        //KLT光流追踪
         cv::calcOpticalFlowPyrLK(cur_img, forw_img, cur_pts, forw_pts, status, err, cv::Size(21, 21), 3);
-
+        //将边界外的点的tracking status设为0
         for (int i = 0; i < int(forw_pts.size()); i++)
             if (status[i] && !inBorder(forw_pts[i]))
                 status[i] = 0;
+
+        //根据status,把跟踪失败的点剔除
+        //不仅要从当前帧数据forw_pts中剔除，而且还要从cur_un_pts、prev_pts和cur_pts中剔除
+        //prev_pts和cur_pts中的特征点是一一对应的
+        //记录特征点id的ids，和记录特征点被跟踪次数的track_cnt也要剔除
         reduceVector(prev_pts, status);
         reduceVector(cur_pts, status);
         reduceVector(forw_pts, status);
@@ -125,16 +133,16 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
         reduceVector(track_cnt, status);
         ROS_DEBUG("temporal optical flow costs: %fms", t_o.toc());
     }
-
+    //tracking结束且降维之后，对tracking到的点的tracking次数自增，数值越大说明被追踪的越久
     for (auto &n : track_cnt)
         n++;
 
     if (PUB_THIS_FRAME)
     {
-        rejectWithF();
+        rejectWithF();//计算F时用了RANSAC筛掉了部分outlier，输出status表示是否为inlier，复用了reduceVector
         ROS_DEBUG("set mask begins");
         TicToc t_m;
-        setMask();
+        setMask();//选tracking次数多的留下来，尽量保证特征点的均匀分布
         ROS_DEBUG("set mask costs %fms", t_m.toc());
 
         ROS_DEBUG("detect feature begins");
@@ -148,9 +156,10 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
                 cout << "mask type wrong " << endl;
             if (mask.size() != forw_img.size())
                 cout << "wrong size " << endl;
+            //使用前面setMask()之后的mask，剩余的没有被置为0的区域都是周围没有过feature的区域，可以在这些区域内提取新的feature points
             cv::goodFeaturesToTrack(forw_img, n_pts, MAX_CNT - forw_pts.size(), 0.01, MIN_DIST, mask);
         }
-        else
+        else//如果无需提取新的features，则n_pts直接清空，后面不用再往forw_pts内添加新的点
             n_pts.clear();
         ROS_DEBUG("detect feature costs: %fms", t_t.toc());
 
@@ -159,6 +168,7 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
         addPoints();
         ROS_DEBUG("selectFeature costs: %fms", t_a.toc());
     }
+    //prev_，cur_变量更新
     prev_img = cur_img;
     prev_pts = cur_pts;
     prev_un_pts = cur_un_pts;
@@ -173,10 +183,11 @@ void FeatureTracker::rejectWithF()
     if (forw_pts.size() >= 8)
     {
         ROS_DEBUG("FM ransac begins");
-        TicToc t_f;
-        vector<cv::Point2f> un_cur_pts(cur_pts.size()), un_forw_pts(forw_pts.size());
+        TicToc t_f;//构造时即开始计时
+        vector<cv::Point2f> un_cur_pts(cur_pts.size()), un_forw_pts(forw_pts.size());//cur_pts和forw_pts维度相同，都是status中为1的所有维度
         for (unsigned int i = 0; i < cur_pts.size(); i++)
         {
+            //分别对cur_pts和forw_pts进行去畸变，得到归一化平面上的3D的坐标
             Eigen::Vector3d tmp_p;
             m_camera->liftProjective(Eigen::Vector2d(cur_pts[i].x, cur_pts[i].y), tmp_p);
             tmp_p.x() = FOCAL_LENGTH * tmp_p.x() / tmp_p.z() + COL / 2.0;
@@ -190,13 +201,15 @@ void FeatureTracker::rejectWithF()
         }
 
         vector<uchar> status;
+        // 这个status我理解应该是对所有match的点对，计算其到极线的dist，用RANSAC阈值卡掉超过阈值的outlier，是outlier=0，inlier=1，
+        // 下面复用了KLT的status接口，对matched feature points进行了筛除。
         cv::findFundamentalMat(un_cur_pts, un_forw_pts, cv::FM_RANSAC, F_THRESHOLD, 0.99, status);
         int size_a = cur_pts.size();
         reduceVector(prev_pts, status);
         reduceVector(cur_pts, status);
         reduceVector(forw_pts, status);
         reduceVector(cur_un_pts, status);
-        reduceVector(ids, status);
+        reduceVector(ids, status);//两个重载的函数reduceVector
         reduceVector(track_cnt, status);
         ROS_DEBUG("FM ransac: %d -> %lu: %f", size_a, forw_pts.size(), 1.0 * forw_pts.size() / size_a);
         ROS_DEBUG("FM ransac costs: %fms", t_f.toc());
@@ -207,7 +220,7 @@ bool FeatureTracker::updateID(unsigned int i)
 {
     if (i < ids.size())
     {
-        if (ids[i] == -1)
+        if (ids[i] == -1)//如果是新的特征点，则id初始化为-1，则id需要自增;如果不是-1则证明是老特征点，无需操作
             ids[i] = n_id++;
         return true;
     }
@@ -267,7 +280,7 @@ void FeatureTracker::undistortedPoints()
         Eigen::Vector2d a(cur_pts[i].x, cur_pts[i].y);
         Eigen::Vector3d b;
         m_camera->liftProjective(a, b);
-        cur_un_pts.push_back(cv::Point2f(b.x() / b.z(), b.y() / b.z()));
+        cur_un_pts.push_back(cv::Point2f(b.x() / b.z(), b.y() / b.z()));//这里b.z()一直都为1，传入b还有什么意义呢？
         cur_un_pts_map.insert(make_pair(ids[i], cv::Point2f(b.x() / b.z(), b.y() / b.z())));
         //printf("cur pts id %d %f %f", ids[i], cur_un_pts[i].x, cur_un_pts[i].y);
     }
@@ -276,28 +289,29 @@ void FeatureTracker::undistortedPoints()
     {
         double dt = cur_time - prev_time;
         pts_velocity.clear();
+        //cur_un_pts当前共有3类点：1.新点(ids==-1)，2.在prev_pts中跟到的点(find!=end)，3.没跟到的点(find==end)
         for (unsigned int i = 0; i < cur_un_pts.size(); i++)
         {
-            if (ids[i] != -1)
+            if (ids[i] != -1)//2，3.不是新点
             {
                 std::map<int, cv::Point2f>::iterator it;
                 it = prev_un_pts_map.find(ids[i]);
-                if (it != prev_un_pts_map.end())
+                if (it != prev_un_pts_map.end())//2.跟到的点
                 {
                     double v_x = (cur_un_pts[i].x - it->second.x) / dt;
                     double v_y = (cur_un_pts[i].y - it->second.y) / dt;
                     pts_velocity.push_back(cv::Point2f(v_x, v_y));
                 }
-                else
+                else//3.没跟到的点：速度直接为0
                     pts_velocity.push_back(cv::Point2f(0, 0));
             }
-            else
+            else//新点：速度直接为0
             {
                 pts_velocity.push_back(cv::Point2f(0, 0));
             }
         }
     }
-    else
+    else//如果第一次则直接将速度设为0
     {
         for (unsigned int i = 0; i < cur_pts.size(); i++)
         {

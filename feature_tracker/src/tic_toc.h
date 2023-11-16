@@ -3,13 +3,13 @@
 #include <ctime>
 #include <cstdlib>
 #include <chrono>
-
+//用于记录对应程序的运行时间
 class TicToc
 {
   public:
     TicToc()
     {
-        tic();
+        tic();//构造时即开始计时
     }
 
     void tic()

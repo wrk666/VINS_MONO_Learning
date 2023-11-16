@@ -27,7 +27,7 @@ bool init_pub = 0;
 
 void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
 {
-    if(first_image_flag)
+    if(first_image_flag)//第一帧直接对时间戳进行操作，然后直接返回
     {
         first_image_flag = false;
         first_image_time = img_msg->header.stamp.toSec();
@@ -41,7 +41,7 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
         first_image_flag = true; 
         last_image_time = 0;
         pub_count = 1;
-        std_msgs::Bool restart_flag;
+        std_msgs::Bool restart_flag;//只有一个unint8的data
         restart_flag.data = true;
         pub_restart.publish(restart_flag);
         return;
@@ -51,7 +51,7 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
     if (round(1.0 * pub_count / (img_msg->header.stamp.toSec() - first_image_time)) <= FREQ)//数量 / 时间 = 频率
     {
         PUB_THIS_FRAME = true;
-        // reset the frequency control
+        // reset the frequency control 时间间隔内的发布频率十分接近设定频率时，更新时间间隔起始时刻，并将数据发布次数置0
         if (abs(1.0 * pub_count / (img_msg->header.stamp.toSec() - first_image_time) - FREQ) < 0.01 * FREQ)
         {
             first_image_time = img_msg->header.stamp.toSec();
@@ -72,7 +72,7 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
         img.step = img_msg->step;
         img.data = img_msg->data;
         img.encoding = "mono8";
-        ptr = cv_bridge::toCvCopy(img, sensor_msgs::image_encodings::MONO8);
+        ptr = cv_bridge::toCvCopy(img, sensor_msgs::image_encodings::MONO8);//Convert a sensor_msgs::Image message to an OpenCV-compatible CvImage
     }
     else
         ptr = cv_bridge::toCvCopy(img_msg, sensor_msgs::image_encodings::MONO8);
@@ -82,10 +82,12 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
     for (int i = 0; i < NUM_OF_CAM; i++)
     {
         ROS_DEBUG("processing camera %d", i);
-        if (i != 1 || !STEREO_TRACK)
+        if (i != 1 || !STEREO_TRACK)//单目就满足
+            //图像的前端处理
             trackerData[i].readImage(ptr->image.rowRange(ROW * i, ROW * (i + 1)), img_msg->header.stamp.toSec());
         else
         {
+            //亮度直方图均衡
             if (EQUALIZE)
             {
                 cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE();
@@ -110,6 +112,7 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
             break;
     }
 
+    //定义该帧图像的特征并发布
    if (PUB_THIS_FRAME)
    {
         pub_count++;
@@ -141,16 +144,16 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
                     p.y = un_pts[j].y;
                     p.z = 1;
 
-                    feature_points->points.push_back(p);
-                    id_of_point.values.push_back(p_id * NUM_OF_CAM + i);
+                    feature_points->points.push_back(p);//3D点
+                    id_of_point.values.push_back(p_id * NUM_OF_CAM + i);//track到的特征点都是成对出现的，左目的i=0，就是自身，右目相应的特征点的id就是多加了1，效果是左右目的tracked points的id只相差1
                     u_of_point.values.push_back(cur_pts[j].x);
                     v_of_point.values.push_back(cur_pts[j].y);
-                    velocity_x_of_point.values.push_back(pts_velocity[j].x);
+                    velocity_x_of_point.values.push_back(pts_velocity[j].x);//光流速度作为该点的速度
                     velocity_y_of_point.values.push_back(pts_velocity[j].y);
                 }
             }
         }
-        feature_points->channels.push_back(id_of_point);
+        feature_points->channels.push_back(id_of_point);//这里每个channel都是一个独立的量，就使用了多个channel
         feature_points->channels.push_back(u_of_point);
         feature_points->channels.push_back(v_of_point);
         feature_points->channels.push_back(velocity_x_of_point);
@@ -162,7 +165,7 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
             init_pub = 1;
         }
         else
-            pub_img.publish(feature_points);
+            pub_img.publish(feature_points);//发布一幅图像中的特征点信息
 
         if (SHOW_TRACK)
         {
@@ -208,11 +211,12 @@ int main(int argc, char **argv)
     ros::init(argc, argv, "feature_tracker");
     ros::NodeHandle n("~");
     ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Info);
-    readParameters(n);
+    readParameters(n);//读取配置参数
 
     for (int i = 0; i < NUM_OF_CAM; i++)
-        trackerData[i].readIntrinsicParameter(CAM_NAMES[i]);
+        trackerData[i].readIntrinsicParameter(CAM_NAMES[i]);//根据配置文件中camera的类型，创建camera对象并从配置文件中读取内参
 
+    //如果是鱼眼则要读取鱼眼的mask用以去除噪声
     if(FISHEYE)
     {
         for (int i = 0; i < NUM_OF_CAM; i++)

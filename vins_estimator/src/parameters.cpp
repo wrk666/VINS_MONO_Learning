@@ -52,6 +52,7 @@ void readParameters(ros::NodeHandle &n)
 
     fsSettings["imu_topic"] >> IMU_TOPIC;
 
+    //保证优化实时性的配置
     SOLVER_TIME = fsSettings["max_solver_time"];
     NUM_ITERATIONS = fsSettings["max_num_iterations"];
     MIN_PARALLAX = fsSettings["keyframe_parallax"];
@@ -62,7 +63,7 @@ void readParameters(ros::NodeHandle &n)
     VINS_RESULT_PATH = OUTPUT_PATH + "/vins_result_no_loop.csv";
     std::cout << "result path " << VINS_RESULT_PATH << std::endl;
 
-    // create folder if not exists
+    // create folder if not exists如果输出文件夹不存在则创建
     FileSystemHelper::createDirectoryIfNotExists(OUTPUT_PATH.c_str());
 
     std::ofstream fout(VINS_RESULT_PATH, std::ios::out);
@@ -96,6 +97,7 @@ void readParameters(ros::NodeHandle &n)
         if (ESTIMATE_EXTRINSIC == 0)
             ROS_WARN(" fix extrinsic param ");
 
+        //如果给出了初始值则将初始值赋予
         cv::Mat cv_R, cv_T;
         fsSettings["extrinsicRotation"] >> cv_R;
         fsSettings["extrinsicTranslation"] >> cv_T;

@@ -129,7 +129,7 @@ CameraFactory::generateCameraFromYamlFile(const std::string& filename)
     {
     case Camera::KANNALA_BRANDT:
     {
-        EquidistantCameraPtr camera(new EquidistantCamera);
+        EquidistantCameraPtr camera(new EquidistantCamera);//等距畸变相机
 
         EquidistantCamera::Parameters params = camera->getParameters();
         params.readFromYamlFile(filename);
@@ -157,7 +157,7 @@ CameraFactory::generateCameraFromYamlFile(const std::string& filename)
     case Camera::MEI:
     default:
     {
-        CataCameraPtr camera(new CataCamera);
+        CataCameraPtr camera(new CataCamera);//卡特鱼眼相机
 
         CataCamera::Parameters params = camera->getParameters();
         params.readFromYamlFile(filename);

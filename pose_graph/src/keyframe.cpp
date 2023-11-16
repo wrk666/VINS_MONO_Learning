@@ -487,7 +487,7 @@ bool KeyFrame::findConnection(KeyFrame* old_kf)
 	    	             relative_yaw;
 	    	if(FAST_RELOCALIZATION)
 	    	{
-			    sensor_msgs::PointCloud msg_match_points;
+			    sensor_msgs::PointCloud msg_match_points;//特征点之间的匹配
 			    msg_match_points.header.stamp = ros::Time(time_stamp);
 			    for (int i = 0; i < (int)matched_2d_old_norm.size(); i++)
 			    {
@@ -500,7 +500,7 @@ bool KeyFrame::findConnection(KeyFrame* old_kf)
 			    Eigen::Vector3d T = old_kf->T_w_i; 
 			    Eigen::Matrix3d R = old_kf->R_w_i;
 			    Quaterniond Q(R);
-			    sensor_msgs::ChannelFloat32 t_q_index;
+			    sensor_msgs::ChannelFloat32 t_q_index;//这个channel如何理解？一个channel是一个通道，这里代表的是一个量就是两帧间的T
 			    t_q_index.values.push_back(T.x());
 			    t_q_index.values.push_back(T.y());
 			    t_q_index.values.push_back(T.z());

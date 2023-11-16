@@ -98,6 +98,7 @@ void update()
 std::vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, sensor_msgs::PointCloudConstPtr>>
 getMeasurements()
 {
+    //将对imu和图像数据进行初步对齐得到的数据结构，确保图像关联着对应时间戳内的所有IMU数据
     std::vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, sensor_msgs::PointCloudConstPtr>> measurements;
 
     while (true)
@@ -293,7 +294,7 @@ void process()
             ROS_DEBUG("processing vision data with stamp %f \n", img_msg->header.stamp.toSec());
 
             TicToc t_s;
-            map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> image;
+            map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> image;//
             for (unsigned int i = 0; i < img_msg->points.size(); i++)
             {
                 int v = img_msg->channels[0].values[i] + 0.5;

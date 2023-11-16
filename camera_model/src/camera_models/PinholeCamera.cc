@@ -440,6 +440,7 @@ PinholeCamera::liftSphere(const Eigen::Vector2d& p, Eigen::Vector3d& P) const
     P.normalize();
 }
 
+//拟合畸变模型，输出归一化平面上的3D坐标(x,y,1)
 /**
  * \brief Lifts a point from the image plane to its projective ray
  *
@@ -453,7 +454,7 @@ PinholeCamera::liftProjective(const Eigen::Vector2d& p, Eigen::Vector3d& P) cons
     double rho2_d, rho4_d, radDist_d, Dx_d, Dy_d, inv_denom_d;
     //double lambda;
 
-    // Lift points to normalised plane
+    // Lift points to normalised plane 将内参的逆变化转化为4个算子invKxx，从像素uv变为归一化平面内的xy1
     mx_d = m_inv_K11 * p(0) + m_inv_K13;
     my_d = m_inv_K22 * p(1) + m_inv_K23;
 
@@ -488,7 +489,7 @@ PinholeCamera::liftProjective(const Eigen::Vector2d& p, Eigen::Vector3d& P) cons
         }
         else
         {
-            // Recursive distortion model
+            // Recursive distortion model(这个递归distortion到底是什么意思？)
             int n = 8;
             Eigen::Vector2d d_u;
             distortion(Eigen::Vector2d(mx_d, my_d), d_u);

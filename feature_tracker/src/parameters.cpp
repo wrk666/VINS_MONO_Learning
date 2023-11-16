@@ -58,11 +58,11 @@ void readParameters(ros::NodeHandle &n)
     FISHEYE = fsSettings["fisheye"];
     if (FISHEYE == 1)
         FISHEYE_MASK = VINS_FOLDER_PATH + "config/fisheye_mask.jpg";
-    CAM_NAMES.push_back(config_file);
+    CAM_NAMES.push_back(config_file);//保存配置文件
 
     WINDOW_SIZE = 20;
     STEREO_TRACK = false;
-    FOCAL_LENGTH = 460;
+    FOCAL_LENGTH = 460;//直接赋值f
     PUB_THIS_FRAME = false;
 
     if (FREQ == 0)

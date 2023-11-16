@@ -538,7 +538,7 @@ int main(int argc, char **argv)
     pub_camera_pose_visual = n.advertise<visualization_msgs::MarkerArray>("camera_pose_visual", 1000);
     pub_key_odometrys = n.advertise<visualization_msgs::Marker>("key_odometrys", 1000);
     pub_vio_path = n.advertise<nav_msgs::Path>("no_loop_path", 1000);
-    pub_match_points = n.advertise<sensor_msgs::PointCloud>("match_points", 100);
+    pub_match_points = n.advertise<sensor_msgs::PointCloud>("match_points", 100);//发布topic match_points
 
     std::thread measurement_process;
     std::thread keyboard_command_process;
