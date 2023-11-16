@@ -27,6 +27,7 @@ class Utility
         return dq;
     }
 
+    //反对称
     template <typename Derived>
     static Eigen::Matrix<typename Derived::Scalar, 3, 3> skewSymmetric(const Eigen::MatrixBase<Derived> &q)
     {
