@@ -41,12 +41,13 @@ class FeaturePerFrame
     double dep_gradient;
 };
 
+//这个id的feature在sliding window内的所有表达，每个表达都是一个FeaturePerFrame对象
 class FeaturePerId
 {
   public:
     const int feature_id;
     int start_frame;
-    vector<FeaturePerFrame> feature_per_frame;
+    vector<FeaturePerFrame> feature_per_frame;//id对应的point，size==sliding window内该id对应的feature被tracking的次数
 
     int used_num;
     bool is_outlier;
@@ -90,8 +91,8 @@ class FeatureManager
     void removeBack();
     void removeFront(int frame_count);
     void removeOutlier();
-    list<FeaturePerId> feature;
-    int last_track_num;
+    list<FeaturePerId> feature; // 管理滑动窗口中所有的特征点
+    int last_track_num;// 最新帧图像跟踪到的特征点的数量
 
   private:
     double compensatedParallax2(const FeaturePerId &it_per_id, int frame_count);

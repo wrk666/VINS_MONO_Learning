@@ -61,6 +61,7 @@ void predict(const sensor_msgs::ImuConstPtr &imu_msg)
     double rz = imu_msg->angular_velocity.z;
     Eigen::Vector3d angular_velocity{rx, ry, rz};
 
+    //这也是processIMU里相同的IMU积分
     Eigen::Vector3d un_acc_0 = tmp_Q * (acc_0 - tmp_Ba) - estimator.g;
 
     Eigen::Vector3d un_gyr = 0.5 * (gyr_0 + angular_velocity) - tmp_Bg;
@@ -77,6 +78,7 @@ void predict(const sensor_msgs::ImuConstPtr &imu_msg)
     gyr_0 = angular_velocity;
 }
 
+//更新IMU参数[P,Q,V,ba,bg,a,g]
 void update()
 {
     TicToc t_predict;
@@ -104,12 +106,15 @@ getMeasurements()
     // 直到把imu_buf或者feature_buf中的数据全部取出，才会退出while循环
     while (true)
     {
-        //以下两个对时间戳的操作保证了IMUbuf两端时间戳都比对应的Img时间戳长
-        //      |--------------------|    IMU
-        //          |-------------|       IMG
-        if (imu_buf.empty() || feature_buf.empty())
+        //以下两个对时间戳的操作保证了IMUbuf两端时间戳都比对应的Img时间戳长，且基本上两帧Img之间的IMU数据都用上了
+        //                  |-|-|-|-|-|             IMU
+        //此帧在添加时已删除->|---------|---------|       IMG
+        if (imu_buf.empty() || feature_buf.empty())//把其中一个读完才能跳出
             return measurements;
         // imu_buf队尾元素的时间戳，早于或等于feature_buf队首元素的时间戳（时间偏移补偿后），则需要等待接收IMU数据
+        //                等待队尾更多的IMU数据
+        //           |-|-|-|-|-|-|                       IMU
+        //          |-------------|-------------|       IMG
         if (!(imu_buf.back()->header.stamp.toSec() > feature_buf.front()->header.stamp.toSec() + estimator.td))
         {
             //ROS_WARN("wait for imu, only should happen at the beginning");
@@ -118,6 +123,9 @@ getMeasurements()
         }
 
         // imu_buf队首元素的时间戳，晚于或等于feature_buf队首元素的时间戳（时间偏移补偿后），则需要剔除feature_buf队首多余的特征点数据
+        //                 |-|-|-|-|-|-|-|               IMU
+        //          |-------------|-------------|       IMG
+        //     剔除这帧IMG数据
         if (!(imu_buf.front()->header.stamp.toSec() < feature_buf.front()->header.stamp.toSec() + estimator.td))
         {
             ROS_WARN("throw img, only should happen at the beginning");
@@ -130,9 +138,10 @@ getMeasurements()
         std::vector<sensor_msgs::ImuConstPtr> IMUs;
         while (imu_buf.front()->header.stamp.toSec() < img_msg->header.stamp.toSec() + estimator.td)
         {
-            IMUs.emplace_back(imu_buf.front());
+            IMUs.emplace_back(imu_buf.front());//emplace_back相比push_back能更好地避免内存的拷贝与移动
             imu_buf.pop();
         }
+        //这里把下一个imu_msg也放进去了,但没有pop，因此当前图像帧和下一图像帧会共用这个imu_msg
         IMUs.emplace_back(imu_buf.front());
         if (IMUs.empty())
             ROS_WARN("no imu between two image");
@@ -243,7 +252,7 @@ void process()
         // 直到measurements不为空时（成功从缓存队列获取数据），匿名函数返回true，则可以退出while循环。
         con.wait(lk, [&]
                  {
-            return (measurements = getMeasurements()).size() != 0;
+            return (measurements = getMeasurements()).size() != 0;//获得时间戳对齐的测量数据(IMUs, img_msg)s
                  });
         lk.unlock();
         m_estimator.lock();
@@ -254,8 +263,8 @@ void process()
             for (auto &imu_msg : measurement.first)
             {
                 double t = imu_msg->header.stamp.toSec();// 最新IMU数据的时间戳
-                double img_t = img_msg->header.stamp.toSec() + estimator.td;//用优化后的td来步长Img时间戳
-                if (t <= img_t)
+                double img_t = img_msg->header.stamp.toSec() + estimator.td;//用优化后的td来补偿Img时间戳
+                if (t <= img_t)//TDOO：为什么当IMU最后的时间戳小于img_t时，不对时间戳进行处理？
                 { 
                     if (current_time < 0) //第一次接受会这样
                         current_time = t;
@@ -326,16 +335,19 @@ void process()
                 Matrix3d relo_r = relo_q.toRotationMatrix();
                 int frame_index;
                 frame_index = relo_msg->channels[0].values[7];
-                estimator.setReloFrame(frame_stamp, frame_index, match_points, relo_t, relo_r);//设置重定位帧 还是 设置回环帧？
+                estimator.setReloFrame(frame_stamp, frame_index, match_points, relo_t, relo_r);//设置重定位帧(relo包括loop detection等操作)
             }
 
             ROS_DEBUG("processing vision data with stamp %f \n", img_msg->header.stamp.toSec());
 
+            //设置feature point id和具体features的map映射
             TicToc t_s;
-            map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> image;//设置feature point id和具体features的map映射
+            map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> image;
             for (unsigned int i = 0; i < img_msg->points.size(); i++)
             {
-                int v = img_msg->channels[0].values[i] + 0.5;//这是啥？？
+                // +0.5再int是四舍五入，因为int是默认向下取整的，
+                // (int)2.4==2,(int)2.9==2;(int)(2.4+0.5)==(int)(2.9)=2;(int)(2.5+0.5)==(int)(3.0)=3，实现了四舍五入
+                int v = img_msg->channels[0].values[i] + 0.5;//为什么要四舍五入？
                 int feature_id = v / NUM_OF_CAM;
                 int camera_id = v % NUM_OF_CAM;
                 double x = img_msg->points[i].x;
@@ -350,7 +362,7 @@ void process()
                 xyz_uv_velocity << x, y, z, p_u, p_v, velocity_x, velocity_y;
                 image[feature_id].emplace_back(camera_id,  xyz_uv_velocity);
             }
-            estimator.processImage(image, img_msg->header);
+            estimator.processImage(image, img_msg->header);//视觉与IMU的初始化以及非线性优化的紧耦合
 
             double whole_t = t_s.toc();
             printStatistics(estimator, whole_t);
@@ -381,7 +393,7 @@ int main(int argc, char **argv)
 {
     ros::init(argc, argv, "vins_estimator");
     ros::NodeHandle n("~");
-    ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Info);
+    ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Debug);
     readParameters(n);
     estimator.setParameter();
 #ifdef EIGEN_DONT_PARALLELIZE
@@ -392,8 +404,11 @@ int main(int argc, char **argv)
     registerPub(n);
     //订阅topic并执行各自的回调
     ros::Subscriber sub_imu = n.subscribe(IMU_TOPIC, 2000, imu_callback, ros::TransportHints().tcpNoDelay());
+    //订阅feature_tracker pub的feature topic，在callback 中 feature_buf.push(feature_msg);
     ros::Subscriber sub_image = n.subscribe("/feature_tracker/feature", 2000, feature_callback);
+    //callbak中清空feature_buf，imu_buf，清除estimator的state和已读取的config paramter
     ros::Subscriber sub_restart = n.subscribe("/feature_tracker/restart", 2000, restart_callback);
+    //callback中relo_buf.push(points_msg);
     ros::Subscriber sub_relo_points = n.subscribe("/pose_graph/match_points", 2000, relocalization_callback);
 
     std::thread measurement_process{process};//创建VIO主线程

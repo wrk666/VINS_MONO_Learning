@@ -18,6 +18,9 @@ ProjectionFactor::ProjectionFactor(const Eigen::Vector3d &_pts_i, const Eigen::V
 #endif
 };
 
+//ceres中计算residual的重载函数evaluate，计算方法就是：Tbc^(-1) * Twb_j^(-1) * Twb_i * Tbc * [1/λ u, 1/λ v, 1/λ, 1]，再与第j帧的观测计算residual
+// uv -> 齐次归一化camera_i -> Tbc转到body_i下 -> Twi转到world下 -> Tbj^(-1)转到body_j下 -> Tbc^(-1)转到归一化camera_j下
+//详见：https://blog.csdn.net/qq_37746927/article/details/130714626#t10
 bool ProjectionFactor::Evaluate(double const *const *parameters, double *residuals, double **jacobians) const
 {
     TicToc tic_toc;

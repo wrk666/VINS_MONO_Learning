@@ -184,13 +184,13 @@ class IntegrationBase
         residuals.block<3, 1>(O_BG, 0) = Bgj - Bgi;
         return residuals;
     }
+    // 中值积分需要使用前后两个时刻的IMU数据
+    double dt; // 前后两个时刻的时间间隔
+    Eigen::Vector3d acc_0, gyr_0;// 前一帧IMU数据中的加速度计测量值和陀螺仪测量值
+    Eigen::Vector3d acc_1, gyr_1;// 后一帧IMU数据中的加速度计测量值和陀螺仪测量值
 
-    double dt;
-    Eigen::Vector3d acc_0, gyr_0;
-    Eigen::Vector3d acc_1, gyr_1;
-
-    const Eigen::Vector3d linearized_acc, linearized_gyr;
-    Eigen::Vector3d linearized_ba, linearized_bg;
+    const Eigen::Vector3d linearized_acc, linearized_gyr; // 这一段预积分初始时刻的IMU测量值，作为常量一直保存，在IntegrationBase对象创建时指定(这个量有什么用吗？在测量改变的时候可以将改变后的量直接乘以预计分量，不用再去积分了？)
+    Eigen::Vector3d linearized_ba, linearized_bg; // 这一段预积分对应的加速度计偏置和陀螺仪偏置
 
     Eigen::Matrix<double, 15, 15> jacobian, covariance;
     Eigen::Matrix<double, 15, 15> step_jacobian;
@@ -207,6 +207,8 @@ class IntegrationBase
     std::vector<Eigen::Vector3d> gyr_buf;
 
 };
+
+//欧拉积分，应该是吧初始时刻的导数作为这一段的导数来近似使用
 /*
 
     void eulerIntegration(double _dt, const Eigen::Vector3d &_acc_0, const Eigen::Vector3d &_gyr_0,

@@ -68,14 +68,15 @@ class Estimator
     MatrixXd Ap[2], backup_A;
     VectorXd bp[2], backup_b;
 
+    // camera与IMU的外参
     Matrix3d ric[NUM_OF_CAM];
     Vector3d tic[NUM_OF_CAM];
 
-    Vector3d Ps[(WINDOW_SIZE + 1)];
-    Vector3d Vs[(WINDOW_SIZE + 1)];
-    Matrix3d Rs[(WINDOW_SIZE + 1)];
-    Vector3d Bas[(WINDOW_SIZE + 1)];
-    Vector3d Bgs[(WINDOW_SIZE + 1)];
+    Vector3d Ps[(WINDOW_SIZE + 1)];// 滑动窗口中各帧在世界坐标系下的位置
+    Vector3d Vs[(WINDOW_SIZE + 1)];// 滑动窗口中各帧在世界坐标系下的速度
+    Matrix3d Rs[(WINDOW_SIZE + 1)];// 滑动窗口中各帧在世界坐标系下的旋转
+    Vector3d Bas[(WINDOW_SIZE + 1)];// 滑动窗口中各帧对应的加速度计偏置
+    Vector3d Bgs[(WINDOW_SIZE + 1)];// 滑动窗口中各帧对应的陀螺仪偏置
     double td;
 
     Matrix3d back_R0, last_R, last_R0;
@@ -89,7 +90,7 @@ class Estimator
     vector<Vector3d> linear_acceleration_buf[(WINDOW_SIZE + 1)];
     vector<Vector3d> angular_velocity_buf[(WINDOW_SIZE + 1)];
 
-    int frame_count;
+    int frame_count;// 最新帧在滑动窗口中的索引（0，1，2，... ，WINDOW_SIZE）
     int sum_of_outlier, sum_of_back, sum_of_front, sum_of_invalid;
 
     FeatureManager f_manager;

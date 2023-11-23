@@ -28,12 +28,12 @@ void FeatureManager::clearState()
 int FeatureManager::getFeatureCount()
 {
     int cnt = 0;
-    for (auto &it : feature)
+    for (auto &it : feature)//遍历sliding window内所有frame
     {
 
         it.used_num = it.feature_per_frame.size();
 
-        if (it.used_num >= 2 && it.start_frame < WINDOW_SIZE - 2)
+        if (it.used_num >= 2 && it.start_frame < WINDOW_SIZE - 2) //如果feature数量不少于2且start_frame小于倒数第二帧（为啥是倒数第二帧？应该是为了计算视察）
         {
             cnt++;
         }
@@ -41,44 +41,61 @@ int FeatureManager::getFeatureCount()
     return cnt;
 }
 
-//通过计算每一个点跟踪次数和它在次新帧和次次新帧间的视差确定是否是关键帧
+/**
+ * 把当前帧图像（frame_count）的特征点添加到feature容器中
+ * 计算第2最新帧与第3最新帧之间的平均视差（当前帧是第1最新帧）
+ * 也就是说当前帧图像特征点存入feature中后，并不会立即判断是否将当前帧添加为新的关键帧，而是去判断当前帧的前一帧（第2最新帧）。
+ * 当前帧图像要在下一次接收到图像时进行判断（那个时候，当前帧已经变成了第2最新帧）
+ */
 bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, double td)
 {
     ROS_DEBUG("input feature: %d", (int)image.size());
     ROS_DEBUG("num of feature: %d", getFeatureCount());
-    double parallax_sum = 0;
-    int parallax_num = 0;
-    last_track_num = 0;
-    for (auto &id_pts : image)
+    double parallax_sum = 0; // 第2最新帧和第3最新帧之间跟踪到的特征点的总视差
+    int parallax_num = 0; // 第2最新帧和第3最新帧之间跟踪到的特征点的数量
+    last_track_num = 0;// 当前帧（第1最新帧）图像跟踪到的特征点的数量
+    for (auto &id_pts : image)//遍历map中的每个元素(键值对)
     {
         FeaturePerFrame f_per_fra(id_pts.second[0].second, td);//取第1个camera(即[0])的的特征，这里只取0是因为只有一个camera, camera_id只有0
 
-        int feature_id = id_pts.first;
+        int feature_id = id_pts.first;//feature的id
+        //成员变量feature是按照id来关联sliding window内的所有feature的，list
         auto it = find_if(feature.begin(), feature.end(), [feature_id](const FeaturePerId &it)
                           {
             return it.feature_id == feature_id;
                           });
 
+        //如果没找到就说明是新feature，需要重新根据id和frame号来new一个feature的list元素并push_back
         if (it == feature.end())
         {
             feature.push_back(FeaturePerId(feature_id, frame_count));
             feature.back().feature_per_frame.push_back(f_per_fra);
         }
+        //如果找到了则说明是老feature，就往相应的feature_id对应的vector中push_back
         else if (it->feature_id == feature_id)
         {
             it->feature_per_frame.push_back(f_per_fra);
-            last_track_num++;
+            last_track_num++;// 当前帧（第1最新帧）图像跟踪到的特征点的数量
         }
     }
 
+    // 1. 当前帧的帧号小于2，即为0或1，为0，则没有第2最新帧，为1，则第2最新帧是滑动窗口中的第1帧，则没有第3新帧；故<2时均无法计算第2和第3新帧见的视察
+    // 2. 当前帧（第1最新帧）跟踪到的特征点数量小于20
+    //（因为如果跟踪到的点数很少，则之前的feature都出现了lost(运动快或者纹理较弱)，所以需要是KF，论文IV.A节）
+    // 出现以上2种情况的任意一种，则认为第2最新帧是关键帧
     if (frame_count < 2 || last_track_num < 20)
         return true;
 
     for (auto &it_per_id : feature)
     {
+        // 至少在两帧前开始tracking，
+        // 且到这一帧还能被tracking(这个我猜的，it_per_id.feature_per_frame.size()就是sliding window内该id的feature被tracking的次数，
+        // 加上start_frame如果>=frame_count则证明到现在还被tracking着，TODO:可以debug看看)
         if (it_per_id.start_frame <= frame_count - 2 &&
             it_per_id.start_frame + int(it_per_id.feature_per_frame.size()) - 1 >= frame_count - 1) //后一个判断条件是什么意思？
         {
+            // 对于给定id的特征点，计算第2最新帧和第3最新帧之间该特征点的视差（当前帧frame_count是第1最新帧）
+            //（需要使用IMU数据补偿由于旋转造成的视差）
             parallax_sum += compensatedParallax2(it_per_id, frame_count);
             parallax_num++;
         }
@@ -354,12 +371,21 @@ void FeatureManager::removeFront(int frame_count)
     }
 }
 
+/**
+ * 对于给定id的特征点
+ * 计算第2最新帧和第3最新帧之间该特征点的视差（当前帧frame_count是第1最新帧）
+ * （需要使用IMU数据补偿由于旋转造成的视差）
+ */
 double FeatureManager::compensatedParallax2(const FeaturePerId &it_per_id, int frame_count)
 {
     //check the second last frame is keyframe or not
     //parallax betwwen seconde last frame and third last frame
-    const FeaturePerFrame &frame_i = it_per_id.feature_per_frame[frame_count - 2 - it_per_id.start_frame];
-    const FeaturePerFrame &frame_j = it_per_id.feature_per_frame[frame_count - 1 - it_per_id.start_frame];
+    //想调试看看这个下标如何打印出来，但是不会打印。
+    int third_lst_idx = frame_count - 2 - it_per_id.start_frame;
+    int second_lst_idx = frame_count - 1 - it_per_id.start_frame;
+    ROS_WARN("======here1: frame_count: %d, third_lst_idx: %d, second_lst_idx: %d\n", frame_count, third_lst_idx, second_lst_idx);
+    const FeaturePerFrame &frame_i = it_per_id.feature_per_frame[third_lst_idx];//third last frame
+    const FeaturePerFrame &frame_j = it_per_id.feature_per_frame[second_lst_idx];//seconde last frame
 
     double ans = 0;
     Vector3d p_j = frame_j.point;
@@ -374,16 +400,16 @@ double FeatureManager::compensatedParallax2(const FeaturePerId &it_per_id, int f
     //int r_j = frame_count - 1;
     //p_i_comp = ric[camera_id_j].transpose() * Rs[r_j].transpose() * Rs[r_i] * ric[camera_id_i] * p_i;
     p_i_comp = p_i;
-    double dep_i = p_i(2);
+    double dep_i = p_i(2);//深度
     double u_i = p_i(0) / dep_i;
     double v_i = p_i(1) / dep_i;
-    double du = u_i - u_j, dv = v_i - v_j;
+    double du = u_i - u_j, dv = v_i - v_j;//计算i,j帧间的视差
 
     double dep_i_comp = p_i_comp(2);
     double u_i_comp = p_i_comp(0) / dep_i_comp;
     double v_i_comp = p_i_comp(1) / dep_i_comp;
     double du_comp = u_i_comp - u_j, dv_comp = v_i_comp - v_j;
-
+    //这俩货不一样？？
     ans = max(ans, sqrt(min(du * du + dv * dv, du_comp * du_comp + dv_comp * dv_comp)));
 
     return ans;

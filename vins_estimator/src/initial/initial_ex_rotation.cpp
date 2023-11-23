@@ -8,6 +8,8 @@ InitialEXRotation::InitialEXRotation(){
     ric = Matrix3d::Identity();
 }
 
+//旋转约束标定Ric，两条路径求取的旋转应相同，所以移项构建方程，使用SVD分解求取特征值最小的特征向量
+//详见第7章博客：https://blog.csdn.net/qq_37746927/article/details/133782580#t4
 bool InitialEXRotation::CalibrationExRotation(vector<pair<Vector3d, Vector3d>> corres, Quaterniond delta_q_imu, Matrix3d &calib_ric_result)
 {
     frame_count++;
