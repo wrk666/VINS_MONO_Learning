@@ -128,13 +128,13 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     ROS_DEBUG("new image coming ------------------------------------------");
     ROS_DEBUG("Adding feature points %lu", image.size());
     // 把当前帧图像（frame_count）的特征点添加到f_manager.feature容器中
-    // 计算第2最新帧与第3最新帧之间的平均视差（当前帧是第1最新帧），然后判断是否把第2最新帧添加为关键帧
+    // 计算第2最新帧与第3最新帧之间的平均视差（当前帧是第1最新帧），判断第2最新帧是否为KF
     // 在未完成初始化时，如果窗口没有塞满，那么是否添加关键帧的判定结果不起作用，滑动窗口要塞满
     // 只有在滑动窗口塞满后，或者初始化完成之后，才需要滑动窗口，此时才需要做关键帧判别，根据第2最新关键帧是否为关键帧选择相应的边缘化策略
     if (f_manager.addFeatureCheckParallax(frame_count, image, td))
-        marginalization_flag = MARGIN_OLD;
+        marginalization_flag = MARGIN_OLD;//如果第2新帧是KF则marg掉最老的一帧
     else
-        marginalization_flag = MARGIN_SECOND_NEW;
+        marginalization_flag = MARGIN_SECOND_NEW;//如果第二新帧不是KF则直接丢掉最新帧的视觉measurement，并对IMU积分propogate
 
     ROS_DEBUG("this frame is--------------------%s", marginalization_flag ? "reject" : "accept");
     ROS_DEBUG("%s", marginalization_flag ? "Non-keyframe" : "Keyframe");
@@ -194,7 +194,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
                 slideWindow();
         }
         else
-            frame_count++;
+            frame_count++;//只在这里自增，自增到WINDOW_SIZE(10)之后就不再自增了，后面都是WINDOW_SIZE(10)，即后面的优化都是需要进行marg的
     }
     else
     {

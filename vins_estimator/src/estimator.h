@@ -90,7 +90,7 @@ class Estimator
     vector<Vector3d> linear_acceleration_buf[(WINDOW_SIZE + 1)];
     vector<Vector3d> angular_velocity_buf[(WINDOW_SIZE + 1)];
 
-    int frame_count;// 最新帧在滑动窗口中的索引（0，1，2，... ，WINDOW_SIZE）
+    int frame_count;// 最新帧在滑动窗口中的索引（0，1，2，... ，WINDOW_SIZE-1）WINDOW_SIZE=10，等frame_count==10时就该进行marg了，以保证window内只有10帧数据
     int sum_of_outlier, sum_of_back, sum_of_front, sum_of_invalid;
 
     FeatureManager f_manager;

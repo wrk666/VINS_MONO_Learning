@@ -43,6 +43,14 @@ T readParam(ros::NodeHandle &n, std::string name)
 void readParameters(ros::NodeHandle &n)
 {
     std::string config_file;
+    n.setParam("config_file", "/home/wrk/catkin_ws/src/VINS-Mono-master/config/euroc/euroc_config.yaml");//设置config_file参数为配置文件路径
+/* 搜索参数，没弄明白
+ * if (n.searchParam("config_file", config_file)){
+        ROS_INFO("config_file was found: %s", config_file.c_str());
+    } else{
+        ROS_INFO("No param 'b' found in an upward search");
+    }*/
+
     config_file = readParam<std::string>(n, "config_file");
     cv::FileStorage fsSettings(config_file, cv::FileStorage::READ);
     if(!fsSettings.isOpened())

@@ -406,9 +406,9 @@ int main(int argc, char **argv)
     ros::Subscriber sub_imu = n.subscribe(IMU_TOPIC, 2000, imu_callback, ros::TransportHints().tcpNoDelay());
     //订阅feature_tracker pub的feature topic，在callback 中 feature_buf.push(feature_msg);
     ros::Subscriber sub_image = n.subscribe("/feature_tracker/feature", 2000, feature_callback);
-    //callbak中清空feature_buf，imu_buf，清除estimator的state和已读取的config paramter
+    //订阅/feature_tracker/restart，callbak中清空feature_buf，imu_buf，清除estimator的state和已读取的config paramter
     ros::Subscriber sub_restart = n.subscribe("/feature_tracker/restart", 2000, restart_callback);
-    //callback中relo_buf.push(points_msg);
+    //订阅/pose_graph/match_points，callback中relo_buf.push(points_msg);
     ros::Subscriber sub_relo_points = n.subscribe("/pose_graph/match_points", 2000, relocalization_callback);
 
     std::thread measurement_process{process};//创建VIO主线程
