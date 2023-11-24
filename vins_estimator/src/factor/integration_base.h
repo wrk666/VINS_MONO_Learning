@@ -197,7 +197,12 @@ class IntegrationBase
     Eigen::Matrix<double, 15, 18> step_V;
     Eigen::Matrix<double, 18, 18> noise;
 
-    double sum_dt;
+    double sum_dt; // 这一段预积分的总时间间隔
+
+    // delta_p、delta_q和delta_v是标称状态的预积分
+    // delta_p表示该段预积分初始时刻本体坐标系下，当前时刻本体坐标系的位置 即αbk+1_bk
+    // delta_q表示该段预积分初始时刻本体坐标系下，当前时刻本体坐标系的旋转 即qbk+1_bk
+    // delta_v表示该段预积分初始时刻本体坐标系下，当前时刻本体坐标系的速度 即βbk+1_bk
     Eigen::Vector3d delta_p;
     Eigen::Quaterniond delta_q;
     Eigen::Vector3d delta_v;

@@ -440,7 +440,8 @@ PinholeCamera::liftSphere(const Eigen::Vector2d& p, Eigen::Vector3d& P) const
     P.normalize();
 }
 
-//拟合畸变模型，输出归一化平面上的3D坐标(x,y,1)
+// 拟合畸变模型，输出归一化平面上的3D坐标(x,y,1):
+// 步骤：1.uv-> 归一化平面 -> 拟合畸变模型 -> 直接输出拟合畸变后的归一化坐标
 /**
  * \brief Lifts a point from the image plane to its projective ray
  *

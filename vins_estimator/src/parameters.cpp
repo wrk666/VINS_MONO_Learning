@@ -43,6 +43,7 @@ T readParam(ros::NodeHandle &n, std::string name)
 void readParameters(ros::NodeHandle &n)
 {
     std::string config_file;
+    //TODO：这里现在配置文件不生效，注意跑别的需要更改
     n.setParam("config_file", "/home/wrk/catkin_ws/src/VINS-Mono-master/config/euroc/euroc_config.yaml");//设置config_file参数为配置文件路径
 /* 搜索参数，没弄明白
  * if (n.searchParam("config_file", config_file)){

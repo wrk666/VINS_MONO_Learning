@@ -145,6 +145,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     ImageFrame imageframe(image, header.stamp.toSec());
     imageframe.pre_integration = tmp_pre_integration;
     all_image_frame.insert(make_pair(header.stamp.toSec(), imageframe));
+    //更新临时预积分初始值
     tmp_pre_integration = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]};
 
     //不知道关于外参的任何info，需要标定
@@ -153,9 +154,12 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         ROS_INFO("calibrating extrinsic param, rotation movement is needed");
         if (frame_count != 0)
         {
+            // 找相邻两帧(bk, bk+1)之间的tracking上的点，构建一个pair，所有pair是一个vector，即corres(pondents),
+            // 要求it.start_frame <= frame_count_l && it.endFrame() >= frame_count_r
             vector<pair<Vector3d, Vector3d>> corres = f_manager.getCorresponding(frame_count - 1, frame_count);
             Matrix3d calib_ric;
             //旋转约束+SVD分解求取Ric旋转外参
+            //delta_q即qbk+1_bk,是从k时刻积分到k+1，所以是qbk+1_bk
             if (initial_ex_rotation.CalibrationExRotation(corres, pre_integrations[frame_count]->delta_q, calib_ric))
             {
                 ROS_WARN("initial extrinsic rotation calib success");
@@ -167,16 +171,18 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         }
     }
 
-    if (solver_flag == INITIAL)
+    //下午先看 initialStructure 部分，之后再看CalibrationExRotation
+    if (solver_flag == INITIAL)// 需要初始化
     {
-        if (frame_count == WINDOW_SIZE)
+        if (frame_count == WINDOW_SIZE)// 滑动窗口中塞满了才进行初始化(初始化并不影响KF的筛选，KF筛选仍然使用：视差>=10和tracked_num<20来判断，满足其一则是KF
         {
             bool result = false;
-            if( ESTIMATE_EXTRINSIC != 2 && (header.stamp.toSec() - initial_timestamp) > 0.1)
+            if( ESTIMATE_EXTRINSIC != 2 && (header.stamp.toSec() - initial_timestamp) > 0.1) //确保有足够的frame参与初始化，有外参，且当前帧时间戳大于初始化时间戳+0.1秒
             {
-               result = initialStructure();
+               result = initialStructure();//执行视觉惯性联合初始化
                initial_timestamp = header.stamp.toSec();
             }
+            //初始化成功则进行一次非线性优化，不成功则进行滑窗操作
             if(result)
             {
                 solver_flag = NON_LINEAR;
@@ -196,7 +202,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         else
             frame_count++;//只在这里自增，自增到WINDOW_SIZE(10)之后就不再自增了，后面都是WINDOW_SIZE(10)，即后面的优化都是需要进行marg的
     }
-    else
+    else//flag==NON_LINEAR,初始化完成，需要求解后端
     {
         TicToc t_solve;
         solveOdometry();
@@ -228,7 +234,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     }
 }
 
-//视觉的结构初始化
+//执行视觉惯性联合初始化
 bool Estimator::initialStructure()
 {
     TicToc t_sfm;
@@ -260,6 +266,7 @@ bool Estimator::initialStructure()
             //return false;
         }
     }
+
     // global sfm
     Quaterniond Q[frame_count + 1];
     Vector3d T[frame_count + 1];
@@ -365,7 +372,7 @@ bool Estimator::initialStructure()
         frame_it->second.R = R_pnp * RIC[0].transpose();
         frame_it->second.T = T_pnp;
     }
-    if (visualInitialAlign())
+    if (visualInitialAlign())//视觉惯性对齐
         return true;
     else
     {

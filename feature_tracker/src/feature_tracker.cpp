@@ -114,8 +114,14 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
         TicToc t_o;
         vector<uchar> status;
         vector<float> err;
-        //KLT光流追踪
+        //KLT光流追踪(在有畸变的图像上进行)
         cv::calcOpticalFlowPyrLK(cur_img, forw_img, cur_pts, forw_pts, status, err, cv::Size(21, 21), 3);
+        //可视化
+//        cv::imshow("show_forw_img", forw_img);
+//        cv::imshow("show_cur_img", cur_img);
+//        showUndistortion("show_cur_imgUndistortion");
+//        cv::waitKey(0); //可视化需要暂停，此时前端也被block住
+
         //将边界外的点的tracking status设为0
         for (int i = 0; i < int(forw_pts.size()); i++)
             if (status[i] && !inBorder(forw_pts[i]))
@@ -156,6 +162,7 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
                 cout << "mask type wrong " << endl;
             if (mask.size() != forw_img.size())
                 cout << "wrong size " << endl;
+            //在有畸变的图像上进行
             //使用前面setMask()之后的mask，剩余的没有被置为0的区域都是周围没有过feature的区域，可以在这些区域内提取新的feature points
             cv::goodFeaturesToTrack(forw_img, n_pts, MAX_CNT - forw_pts.size(), 0.01, MIN_DIST, mask);
         }
@@ -174,7 +181,7 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
     prev_un_pts = cur_un_pts;
     cur_img = forw_img;
     cur_pts = forw_pts;
-    undistortedPoints();
+    undistortedPoints();//去畸变
     prev_time = cur_time;
 }
 
@@ -267,7 +274,7 @@ void FeatureTracker::showUndistortion(const string &name)
         }
     }
     cv::imshow(name, undistortedImg);
-    cv::waitKey(0);
+//    cv::waitKey(0);
 }
 
 void FeatureTracker::undistortedPoints()

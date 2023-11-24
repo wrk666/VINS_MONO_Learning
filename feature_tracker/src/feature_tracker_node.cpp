@@ -153,11 +153,12 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
                 }
             }
         }
-        feature_points->channels.push_back(id_of_point);//这里每个channel都是一个独立的量，就使用了多个channel
-        feature_points->channels.push_back(u_of_point);
-        feature_points->channels.push_back(v_of_point);
-        feature_points->channels.push_back(velocity_x_of_point);
-        feature_points->channels.push_back(velocity_y_of_point);
+       //这里每个channel都是一个独立的量，就使用了多个channel
+        feature_points->channels.push_back(id_of_point);//[0]feature_id
+        feature_points->channels.push_back(u_of_point);//[1]2D u
+        feature_points->channels.push_back(v_of_point);//[2]2D v
+        feature_points->channels.push_back(velocity_x_of_point);//[3]
+        feature_points->channels.push_back(velocity_y_of_point);//[4]
         ROS_DEBUG("publish %f, at %f", feature_points->header.stamp.toSec(), ros::Time::now().toSec());
         // skip the first image; since no optical speed on frist image
         if (!init_pub)

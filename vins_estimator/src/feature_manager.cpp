@@ -79,7 +79,7 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
         }
     }
 
-    // 1. 当前帧的帧号小于2，即为0或1，为0，则没有第2最新帧，为1，则第2最新帧是滑动窗口中的第1帧，则没有第3新帧；故<2时均无法计算第2和第3新帧见的视察
+    // 1. 当前帧的帧号小于2，即为0或1，为0，则没有第2最新帧，为1，则第2最新帧是滑动窗口中的第1帧，则没有第3新帧；故<2时均无法计算第2和第3新帧见的视差
     // 2. 当前帧（第1最新帧）跟踪到的特征点数量小于20
     //（因为如果跟踪到的点数很少，则之前的feature都出现了lost(运动快或者纹理较弱)，所以需要是KF，论文IV.A节）
     // 出现以上2种情况的任意一种，则认为第2最新帧是关键帧
@@ -95,13 +95,13 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
         if (it_per_id.start_frame <= frame_count - 2 &&
             it_per_id.start_frame + int(it_per_id.feature_per_frame.size()) - 1 >= frame_count - 1) //后一个判断条件是什么意思？
         {
-            ROS_DEBUG("condition matched: condition_1: %d, condition_2: %d, frame_count: %d", it_per_id.start_frame, condition_2, frame_count);
+//            ROS_DEBUG("condition matched: condition_1: %d, condition_2: %d, frame_count: %d", it_per_id.start_frame, condition_2, frame_count);
             // 对于给定id的特征点，计算第2最新帧和第3最新帧之间该特征点的视差（当前帧frame_count是第1最新帧）
             //（需要使用IMU数据补偿由于旋转造成的视差）
             parallax_sum += compensatedParallax2(it_per_id, frame_count);
             parallax_num++;
         } else {
-            ROS_WARN("condition not matched: condition_1: %d, condition_2: %d, frame_count: %d", it_per_id.start_frame, condition_2, frame_count);
+//            ROS_WARN("condition not matched: condition_1: %d, condition_2: %d, frame_count: %d", it_per_id.start_frame, condition_2, frame_count);
         }
     }
 
@@ -115,7 +115,7 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
     {
         ROS_DEBUG("parallax_sum: %lf, parallax_num: %d", parallax_sum, parallax_num);
         ROS_DEBUG("current parallax: %lf", parallax_sum / parallax_num * FOCAL_LENGTH);
-        return parallax_sum / parallax_num >= MIN_PARALLAX;
+        return parallax_sum / parallax_num >= MIN_PARALLAX;//MIN_PARALLAX这里配置为10
     }
 }
 
@@ -375,7 +375,6 @@ void FeatureManager::removeFront(int frame_count)
     }
 }
 
-//又看到这了------------------------------------
 /**
  * 对于给定id的特征点
  * 计算第2最新帧和第3最新帧之间该特征点的视差（当前帧frame_count是第1最新帧）
@@ -385,38 +384,44 @@ double FeatureManager::compensatedParallax2(const FeaturePerId &it_per_id, int f
 {
     //check the second last frame is keyframe or not
     //parallax betwwen seconde last frame and third last frame
-    //想调试看看这个下标如何打印出来，但是不会打印。
+    //计算3rd和2nd在it_per_id.feature_per_frame下的index，size是该id的feature已经被tracking的次数，
+    // 如frame_count=4时，从第0帧开始被tracking，start_frame=0，则3rd和2nd时，it_per_id.feature_per_frame.size()分别为3[index=2],4[index=3]，则他们的index分别为4-2-0=2，4-1-0=3
+    // start_frame=1时，size()=2[index=1],3[index=2], index分别为4-2-1=1，4-1-1=2，图示见博客4.2节：https://blog.csdn.net/qq_37746927/article/details/134436475
     int third_lst_idx = frame_count - 2 - it_per_id.start_frame;
     int second_lst_idx = frame_count - 1 - it_per_id.start_frame;
     //这里的window size是10
-    ROS_INFO("======here1: frame_count: %d, third_lst_idx: %d, second_lst_idx: %d", frame_count, third_lst_idx, second_lst_idx);
+    /*ROS_INFO("======here1: frame_count: %d, third_lst_idx: %d, second_lst_idx: %d", frame_count, third_lst_idx, second_lst_idx);*/
     const FeaturePerFrame &frame_i = it_per_id.feature_per_frame[third_lst_idx];//third last frame
     const FeaturePerFrame &frame_j = it_per_id.feature_per_frame[second_lst_idx];//seconde last frame
 
+
+    // -------------   3rd     2nd         1st
+    //  other_frame     i       j     frame_count
     double ans = 0;
-    Vector3d p_j = frame_j.point;
+    Vector3d p_j = frame_j.point;//2nd
 
     double u_j = p_j(0);
     double v_j = p_j(1);
 
-    Vector3d p_i = frame_i.point;
+    Vector3d p_i = frame_i.point;//3rd
     Vector3d p_i_comp;
 
     //int r_i = frame_count - 2;
     //int r_j = frame_count - 1;
-    //p_i_comp = ric[camera_id_j].transpose() * Rs[r_j].transpose() * Rs[r_i] * ric[camera_id_i] * p_i;
+    //p_i_comp = ric[camera_id_j].transpose() * Rs[r_j].transpose() * Rs[r_i] * ric[camera_id_i] * p_i;//这是将i重投影到j？计算rpj error？搞错了吧
     p_i_comp = p_i;
     double dep_i = p_i(2);//深度
-    double u_i = p_i(0) / dep_i;
+    double u_i = p_i(0) / dep_i;//i归一化
     double v_i = p_i(1) / dep_i;
-    double du = u_i - u_j, dv = v_i - v_j;//计算i,j帧间的视差
+    double du = u_i - u_j, dv = v_i - v_j;//计算i,j帧间的视差(为啥j不归一化？)
 
     double dep_i_comp = p_i_comp(2);
     double u_i_comp = p_i_comp(0) / dep_i_comp;
     double v_i_comp = p_i_comp(1) / dep_i_comp;
     double du_comp = u_i_comp - u_j, dv_comp = v_i_comp - v_j;
-    //这俩货不一样？？
-    ans = max(ans, sqrt(min(du * du + dv * dv, du_comp * du_comp + dv_comp * dv_comp)));
+//    ROS_INFO("====u_equal: %d, v_equal: %d, u_i: %f, u_i_comp: %f, v_i: %f, v_i_comp: %f", u_i==u_i_comp, v_i==v_i_comp, u_i, u_i_comp, v_i, v_i_comp);
+    //这俩货是一样的，有啥作用？也没看到IMUN啥补偿啊？
+    ans = max(ans, sqrt(min(du * du + dv * dv, du_comp * du_comp + dv_comp * dv_comp)));//勾股定理计算视差的欧氏距离
 
     return ans;
 }

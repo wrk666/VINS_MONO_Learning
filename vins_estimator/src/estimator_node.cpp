@@ -3,7 +3,7 @@
 #include <map>
 #include <thread>
 #include <mutex>
-#include <condition_variable>
+#include <condition_variable>//用于等待measurement的到来
 #include <ros/ros.h>
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/opencv.hpp>
@@ -186,7 +186,7 @@ void feature_callback(const sensor_msgs::PointCloudConstPtr &feature_msg)
         return;
     }
     m_buf.lock();
-    feature_buf.push(feature_msg);
+    feature_buf.push(feature_msg);//feature存入feature_buf
     m_buf.unlock();
     con.notify_one();
 }
@@ -252,13 +252,13 @@ void process()
         // 直到measurements不为空时（成功从缓存队列获取数据），匿名函数返回true，则可以退出while循环。
         con.wait(lk, [&]
                  {
-            return (measurements = getMeasurements()).size() != 0;//获得时间戳对齐的测量数据(IMUs, img_msg)s
+            return (measurements = getMeasurements()).size() != 0;//获得时间戳对齐的测量数据(IMUs, img_msg)s，而img_msg就是feature_buf里面的内容，即feature
                  });
         lk.unlock();
         m_estimator.lock();
         for (auto &measurement : measurements)
         {
-            auto img_msg = measurement.second;
+            auto img_msg = measurement.second;  //measurement.second就是pair<IMUs, img_msg>的second，即img_msg，即features
             double dx = 0, dy = 0, dz = 0, rx = 0, ry = 0, rz = 0;
             for (auto &imu_msg : measurement.first)
             {
@@ -350,10 +350,10 @@ void process()
                 int v = img_msg->channels[0].values[i] + 0.5;//为什么要四舍五入？
                 int feature_id = v / NUM_OF_CAM;
                 int camera_id = v % NUM_OF_CAM;
-                double x = img_msg->points[i].x;
+                double x = img_msg->points[i].x;//拟合畸变的归一化3D feature 坐标
                 double y = img_msg->points[i].y;
                 double z = img_msg->points[i].z;
-                double p_u = img_msg->channels[1].values[i];
+                double p_u = img_msg->channels[1].values[i];//未拟合畸变的原始观测2D uv 坐标
                 double p_v = img_msg->channels[2].values[i];
                 double velocity_x = img_msg->channels[3].values[i];
                 double velocity_y = img_msg->channels[4].values[i];
