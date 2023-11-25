@@ -15,19 +15,21 @@ using namespace std;
 
 struct SFMFeature
 {
-    bool state;
+    bool state;//状态（是否被三角化）
     int id;
-    vector<pair<int,Vector2d>> observation;
-    double position[3];
-    double depth;
+    vector<pair<int,Vector2d>> observation;//所有观测到该特征点的图像帧ID和图像坐标
+    double position[3];//3d坐标
+    double depth;//深度
 };
 
+//自己定义的代价函数，即定义residual的计算方式，是一个函数模板，需要重载()运算符，传参为输入参数1指针，输入参数2指针...输出参数residual指针
 struct ReprojectionError3D
 {
 	ReprojectionError3D(double observed_u, double observed_v)
 		:observed_u(observed_u), observed_v(observed_v)
 		{}
 
+		//只需定义重载，无需自己调用，ceres内部自己调用
 	template <typename T>
 	bool operator()(const T* const camera_R, const T* const camera_T, const T* point, T* residuals) const
 	{
@@ -40,10 +42,11 @@ struct ReprojectionError3D
     	residuals[1] = yp - T(observed_v);
     	return true;
 	}
-
+    //AddResidualBlock的第一个参数cost_function
 	static ceres::CostFunction* Create(const double observed_x,
 	                                   const double observed_y) 
 	{
+        //输出维度(residual维度)2，输入维度4，3，3
 	  return (new ceres::AutoDiffCostFunction<
 	          ReprojectionError3D, 2, 4, 3, 3>(
 	          	new ReprojectionError3D(observed_x,observed_y)));

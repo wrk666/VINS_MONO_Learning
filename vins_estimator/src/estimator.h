@@ -64,7 +64,7 @@ class Estimator
 
     SolverFlag solver_flag;
     MarginalizationFlag  marginalization_flag;
-    Vector3d g;
+    Vector3d g;//重力细化就是对这个变量
     MatrixXd Ap[2], backup_A;
     VectorXd bp[2], backup_b;
 
@@ -72,21 +72,21 @@ class Estimator
     Matrix3d ric[NUM_OF_CAM];
     Vector3d tic[NUM_OF_CAM];
 
-    Vector3d Ps[(WINDOW_SIZE + 1)];// 滑动窗口中各帧在世界坐标系下的位置
-    Vector3d Vs[(WINDOW_SIZE + 1)];// 滑动窗口中各帧在世界坐标系下的速度
-    Matrix3d Rs[(WINDOW_SIZE + 1)];// 滑动窗口中各帧在世界坐标系下的旋转
-    Vector3d Bas[(WINDOW_SIZE + 1)];// 滑动窗口中各帧对应的加速度计偏置
-    Vector3d Bgs[(WINDOW_SIZE + 1)];// 滑动窗口中各帧对应的陀螺仪偏置
+    Vector3d Ps[(WINDOW_SIZE + 1)]; // 滑动窗口中各帧在世界坐标系下的位置
+    Vector3d Vs[(WINDOW_SIZE + 1)]; // 滑动窗口中各帧在世界坐标系下的速度
+    Matrix3d Rs[(WINDOW_SIZE + 1)]; // 滑动窗口中各帧在世界坐标系下的旋转
+    Vector3d Bas[(WINDOW_SIZE + 1)]; // 滑动窗口中各帧对应的加速度计偏置
+    Vector3d Bgs[(WINDOW_SIZE + 1)]; // 滑动窗口中各帧对应的陀螺仪偏置
     double td;
 
     Matrix3d back_R0, last_R, last_R0;
     Vector3d back_P0, last_P, last_P0;
     std_msgs::Header Headers[(WINDOW_SIZE + 1)];
 
-    IntegrationBase *pre_integrations[(WINDOW_SIZE + 1)];//总共11维？
+    IntegrationBase *pre_integrations[(WINDOW_SIZE + 1)];//总共11维的指针数组，放的是每一帧的预积分类的指针,为什么要定义WINDOW_SIZE个，一个不就够了吗？反正放的是每两个IMU数据之间的预积分
     Vector3d acc_0, gyr_0;
 
-    vector<double> dt_buf[(WINDOW_SIZE + 1)];
+    vector<double> dt_buf[(WINDOW_SIZE + 1)];//是一个数组，元素是vector<一个measurement中的每次积分的dt>，下面两个变量同理。
     vector<Vector3d> linear_acceleration_buf[(WINDOW_SIZE + 1)];
     vector<Vector3d> angular_velocity_buf[(WINDOW_SIZE + 1)];
 
@@ -121,7 +121,7 @@ class Estimator
     vector<double *> last_marginalization_parameter_blocks;
 
     map<double, ImageFrame> all_image_frame;
-    IntegrationBase *tmp_pre_integration;
+    IntegrationBase *tmp_pre_integration;//单帧临时的预积分的指针,和pre_integrations同一时间进行积分，用于在创建ImageFrame对象时，把该指针赋给该帧图像对应的pre_integration
 
     //relocalization variable
     bool relocalization_info;

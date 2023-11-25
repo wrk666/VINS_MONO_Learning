@@ -1,5 +1,7 @@
 #include "feature_manager.h"
 
+//由于buf window的所有数据的时候会多buf一帧(如Ps定义为 Vector3d Ps[(WINDOW_SIZE + 1)];)，
+//用于判断要如何marg，所以endframe是可能取到最后一帧的，即edFrame()==WINDOW_SIZE
 int FeaturePerId::endFrame()
 {
     return start_frame + feature_per_frame.size() - 1;

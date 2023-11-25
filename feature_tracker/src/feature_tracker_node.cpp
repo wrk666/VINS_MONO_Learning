@@ -142,7 +142,7 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
                     geometry_msgs::Point32 p;
                     p.x = un_pts[j].x;
                     p.y = un_pts[j].y;
-                    p.z = 1;
+                    p.z = 1;//归一化的相机坐标系下的坐标
 
                     feature_points->points.push_back(p);//3D点
                     id_of_point.values.push_back(p_id * NUM_OF_CAM + i);//track到的特征点都是成对出现的，左目的i=0，就是自身，右目相应的特征点的id就是多加了1，效果是左右目的tracked points的id只相差1

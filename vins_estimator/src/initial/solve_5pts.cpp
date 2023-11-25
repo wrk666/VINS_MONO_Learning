@@ -27,6 +27,8 @@ namespace cv {
         t.copyTo(_t);
     }
 
+    //1.从E中恢复出Rt，并三角化，
+    //2.根据深度正负来找出正确的解
     int recoverPose( InputArray E, InputArray _points1, InputArray _points2, InputArray _cameraMatrix,
                          OutputArray _R, OutputArray _t, InputOutputArray _mask)
     {
@@ -62,6 +64,7 @@ namespace cv {
         points2 = points2.t();
 
         Mat R1, R2, t;
+        //从E#中反解出两个R和1个t(这里传参只有一个t，感觉是因为另一个t实际上就是取负号，所以直接没定义)
         decomposeEssentialMat(E, R1, R2, t);
         Mat P0 = Mat::eye(3, 4, R1.type());
         Mat P1(3, 4, R1.type()), P2(3, 4, R1.type()), P3(3, 4, R1.type()), P4(3, 4, R1.type());
@@ -189,7 +192,7 @@ namespace cv {
     }
 }
 
-
+//5点法求解RT（为了减小计算量，使用了5点非8点）
 bool MotionEstimator::solveRelativeRT(const vector<pair<Vector3d, Vector3d>> &corres, Matrix3d &Rotation, Vector3d &Translation)
 {
     if (corres.size() >= 15)
@@ -215,7 +218,7 @@ bool MotionEstimator::solveRelativeRT(const vector<pair<Vector3d, Vector3d>> &co
             for (int j = 0; j < 3; j++)
                 R(i, j) = rot.at<double>(i, j);
         }
-
+        //解出来是R[WINDOW_SIZE]_l，求逆转为Rl_[WINDOW_SIZE]
         Rotation = R.transpose();
         Translation = -R.transpose() * T;
         if(inlier_cnt > 12)

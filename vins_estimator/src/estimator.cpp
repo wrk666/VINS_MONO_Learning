@@ -87,30 +87,30 @@ void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const
     if (!first_imu)
     {
         first_imu = true;
-        acc_0 = linear_acceleration;
+        acc_0 = linear_acceleration;//保存本次measurement中的第一帧IMU数据（有啥用？）
         gyr_0 = angular_velocity;
     }
 
-    if (!pre_integrations[frame_count])
+    if (!pre_integrations[frame_count])//如果frame_count的积分为空则new一个预积分对象
     {
         pre_integrations[frame_count] = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]};
     }
-    if (frame_count != 0)
+    if (frame_count != 0)//
     {
-        pre_integrations[frame_count]->push_back(dt, linear_acceleration, angular_velocity);
+        pre_integrations[frame_count]->push_back(dt, linear_acceleration, angular_velocity);//调用IntegrationBase中定义的成员函数push_back，保存变量并propagate预积分
         //if(solver_flag != NON_LINEAR)
             tmp_pre_integration->push_back(dt, linear_acceleration, angular_velocity);
 
-        dt_buf[frame_count].push_back(dt);
+        dt_buf[frame_count].push_back(dt);//保存这两帧IMU之间的时间间隔，用于预积分
         linear_acceleration_buf[frame_count].push_back(linear_acceleration);
         angular_velocity_buf[frame_count].push_back(angular_velocity);
 
-        //IMU预积分
+        //IMU预积分(为什么这里要重新再算一遍？push_back里面不是重新算过了吗？为什么不直接把delta_p灯结果拿出直接用？)
         // 用IMU数据进行积分，当积完一个measurement中所有IMU数据后，就得到了对应图像帧在世界坐标系中的Ps、Vs、Rs（这里为什么是相对于世界坐标系呢？为什么不把关于world系的抽出来呢？）
         // 下面这一部分的积分，在没有成功完成初始化时似乎是没有意义的，因为在没有成功初始化时，对IMU数据来说是没有世界坐标系的
         // 当成功完成了初始化后，下面这一部分积分才有用，它可以通过IMU积分得到滑动窗口中最新帧在世界坐标系中的P V R
-        int j = frame_count;         
-        Vector3d un_acc_0 = Rs[j] * (acc_0 - Bas[j]) - g;
+        int j = frame_count;//到后面frame_count一直为window_size即10
+        Vector3d un_acc_0 = Rs[j] * (acc_0 - Bas[j]) - g;//为什么要有重力g？
         Vector3d un_gyr = 0.5 * (gyr_0 + angular_velocity) - Bgs[j];
         Rs[j] *= Utility::deltaQ(un_gyr * dt).toRotationMatrix();
         Vector3d un_acc_1 = Rs[j] * (linear_acceleration - Bas[j]) - g;
@@ -118,7 +118,7 @@ void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const
         Ps[j] += dt * Vs[j] + 0.5 * dt * dt * un_acc;
         Vs[j] += dt * un_acc;
     }
-    acc_0 = linear_acceleration;
+    acc_0 = linear_acceleration;//更新本次预积分的初始值
     gyr_0 = angular_velocity;
 }
 
@@ -145,7 +145,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     ImageFrame imageframe(image, header.stamp.toSec());
     imageframe.pre_integration = tmp_pre_integration;
     all_image_frame.insert(make_pair(header.stamp.toSec(), imageframe));
-    //更新临时预积分初始值
+    //用于下一个measurement进行积分
     tmp_pre_integration = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]};
 
     //不知道关于外参的任何info，需要标定
@@ -154,7 +154,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         ROS_INFO("calibrating extrinsic param, rotation movement is needed");
         if (frame_count != 0)
         {
-            // 找相邻两帧(bk, bk+1)之间的tracking上的点，构建一个pair，所有pair是一个vector，即corres(pondents),
+            // 找相邻两帧(bk, bk+1)之间的tracking上的点，构建一个pair，所有pair是一个vector，即corres(pondents),first=前一帧的去畸变的归一化平面上的点，second=后一帧的
             // 要求it.start_frame <= frame_count_l && it.endFrame() >= frame_count_r
             vector<pair<Vector3d, Vector3d>> corres = f_manager.getCorresponding(frame_count - 1, frame_count);
             Matrix3d calib_ric;
@@ -171,7 +171,6 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         }
     }
 
-    //下午先看 initialStructure 部分，之后再看CalibrationExRotation
     if (solver_flag == INITIAL)// 需要初始化
     {
         if (frame_count == WINDOW_SIZE)// 滑动窗口中塞满了才进行初始化(初始化并不影响KF的筛选，KF筛选仍然使用：视差>=10和tracked_num<20来判断，满足其一则是KF
@@ -234,7 +233,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     }
 }
 
-//执行视觉惯性联合初始化
+//执行视觉惯性联合初始化,包含两部分：1. visual SfM，2.visual和IMU的align(估计gyro bias，scale，重力细化RefineGravity)
 bool Estimator::initialStructure()
 {
     TicToc t_sfm;
@@ -242,14 +241,15 @@ bool Estimator::initialStructure()
     {
         map<double, ImageFrame>::iterator frame_it;
         Vector3d sum_g;
+        //遍历window内所有的ImageFrame
         for (frame_it = all_image_frame.begin(), frame_it++; frame_it != all_image_frame.end(); frame_it++)
         {
-            double dt = frame_it->second.pre_integration->sum_dt;
-            Vector3d tmp_g = frame_it->second.pre_integration->delta_v / dt;
+            double dt = frame_it->second.pre_integration->sum_dt;//该帧总时间
+            Vector3d tmp_g = frame_it->second.pre_integration->delta_v / dt;//速度/时间=加速度？
             sum_g += tmp_g;
         }
         Vector3d aver_g;
-        aver_g = sum_g * 1.0 / ((int)all_image_frame.size() - 1);
+        aver_g = sum_g * 1.0 / ((int)all_image_frame.size() - 1);//线加速度均值，因为第一帧没有，所以-1
         double var = 0;
         for (frame_it = all_image_frame.begin(), frame_it++; frame_it != all_image_frame.end(); frame_it++)
         {
@@ -258,9 +258,9 @@ bool Estimator::initialStructure()
             var += (tmp_g - aver_g).transpose() * (tmp_g - aver_g);
             //cout << "frame g " << tmp_g.transpose() << endl;
         }
-        var = sqrt(var / ((int)all_image_frame.size() - 1));
+        var = sqrt(var / ((int)all_image_frame.size() - 1));//求线加速度的标准差
         //ROS_WARN("IMU variation %f!", var);
-        if(var < 0.25)
+        if(var < 0.25)//如果加速度方差小于0.25，则证明加速度波动较小，证明IMU激励不够（TODO：这个0.25跟标定qcb旋转外参得手SVD的特征值的那个0.25有关系吗？）
         {
             ROS_INFO("IMU excitation not enouth!");
             //return false;
@@ -270,30 +270,34 @@ bool Estimator::initialStructure()
     // global sfm
     Quaterniond Q[frame_count + 1];
     Vector3d T[frame_count + 1];
+    //把window内所有id对应的所有feature都存到一个vector<SFMFeature>中
     map<int, Vector3d> sfm_tracked_points;
     vector<SFMFeature> sfm_f;
-    for (auto &it_per_id : f_manager.feature)
+    for (auto &it_per_id : f_manager.feature)//feature是list，元素是装了window内的所有该id的feature的vector，即一个feature_id对应一个vector
     {
         int imu_j = it_per_id.start_frame - 1;
         SFMFeature tmp_feature;
-        tmp_feature.state = false;
+        tmp_feature.state = false;//未被三角化
         tmp_feature.id = it_per_id.feature_id;
-        for (auto &it_per_frame : it_per_id.feature_per_frame)
+        for (auto &it_per_frame : it_per_id.feature_per_frame)//window内该id对应的所有的Matrix<double, 7, 1>
         {
             imu_j++;
             Vector3d pts_j = it_per_frame.point;
-            tmp_feature.observation.push_back(make_pair(imu_j, Eigen::Vector2d{pts_j.x(), pts_j.y()}));
+            tmp_feature.observation.push_back(make_pair(imu_j, Eigen::Vector2d{pts_j.x(), pts_j.y()}));//observation: 所有观测到该特征点的图像帧ID和图像坐标
         }
         sfm_f.push_back(tmp_feature);
     } 
     Matrix3d relative_R;
     Vector3d relative_T;
     int l;
+    //选择window内第一个满足“tracking数量>20,平均视差>30”的帧(l)与最新帧之间的relative pose，是从最新帧到第l帧
     if (!relativePose(relative_R, relative_T, l))
     {
         ROS_INFO("Not enough features or parallax; Move device around");
         return false;
     }
+    //看到这了----------------------------------------------------------------------
+    //求解SfM问题：对窗口中每个图像帧求解sfm问题，得到所有图像帧相对于参考帧的旋转四元数Q、平移向量T和特征点坐标sfm_tracked_points。
     GlobalSFM sfm;
     if(!sfm.construct(frame_count + 1, Q, T, l,
               relative_R, relative_T,
@@ -304,7 +308,7 @@ bool Estimator::initialStructure()
         return false;
     }
 
-    //solve pnp for all frame
+    //solve pnp for all frame(直接用cv的库函数，没有再使用ceres构建problem)
     map<double, ImageFrame>::iterator frame_it;
     map<int, Vector3d>::iterator it;
     frame_it = all_image_frame.begin( );
@@ -420,6 +424,7 @@ bool Estimator::visualInitialAlign()
     double s = (x.tail<1>())(0);
     for (int i = 0; i <= WINDOW_SIZE; i++)
     {
+        //对每一帧camera之间的IMNU数据重新进行积分，比IMU两帧之间粒度大一些
         pre_integrations[i]->repropagate(Vector3d::Zero(), Bgs[i]);
     }
     for (int i = frame_count; i >= 0; i--)
@@ -460,14 +465,18 @@ bool Estimator::visualInitialAlign()
     return true;
 }
 
+//选择window内第一个满足tracking数量>20,平均视差>30的帧(l)与最新帧之间的relative pose，是从最新帧到第l帧
 bool Estimator::relativePose(Matrix3d &relative_R, Vector3d &relative_T, int &l)
 {
     // find previous frame which contians enough correspondance and parallex with newest frame
+    //对应论文V.A节
     for (int i = 0; i < WINDOW_SIZE; i++)
     {
         vector<pair<Vector3d, Vector3d>> corres;
+        // 找第i帧和buffer内最后一帧，(i, WINDOW_SIZE),之间的tracking上的点，构建一个pair，
+        // 所有pair是一个vector，即corres(pondents),first=前一帧的去畸变的归一化平面上的点，second=后一帧的
         corres = f_manager.getCorresponding(i, WINDOW_SIZE);
-        if (corres.size() > 20)
+        if (corres.size() > 20)//要求两帧的共视点大于20对
         {
             double sum_parallax = 0;
             double average_parallax;
@@ -475,11 +484,13 @@ bool Estimator::relativePose(Matrix3d &relative_R, Vector3d &relative_T, int &l)
             {
                 Vector2d pts_0(corres[j].first(0), corres[j].first(1));
                 Vector2d pts_1(corres[j].second(0), corres[j].second(1));
-                double parallax = (pts_0 - pts_1).norm();
+                double parallax = (pts_0 - pts_1).norm();//计算共视点的视差(欧氏距离)
                 sum_parallax = sum_parallax + parallax;
 
             }
-            average_parallax = 1.0 * sum_parallax / int(corres.size());
+            average_parallax = 1.0 * sum_parallax / int(corres.size());//平均视差
+            //用内参将归一化平面上的点转化到像素平面fx*X/Z + cx，cx相减抵消，z=1，所以直接就是fx*X
+            //求的Rt是当前帧([WINDOW_SIZE]帧)到第l帧的坐标系变换Rl_[WINDOW_SIZE]
             if(average_parallax * 460 > 30 && m_estimator.solveRelativeRT(corres, relative_R, relative_T))
             {
                 l = i;
@@ -1027,6 +1038,7 @@ void Estimator::optimization()
 void Estimator::slideWindow()
 {
     TicToc t_margin;
+    //把最老的帧冒泡移到最右边，然后delete掉，在new一个新的对象出来
     if (marginalization_flag == MARGIN_OLD)
     {
         double t_0 = Headers[0].stamp.toSec();
@@ -1034,22 +1046,23 @@ void Estimator::slideWindow()
         back_P0 = Ps[0];
         if (frame_count == WINDOW_SIZE)
         {
-            for (int i = 0; i < WINDOW_SIZE; i++)
+            for (int i = 0; i < WINDOW_SIZE; i++)//循环完成也就冒泡完成到最右侧
             {
-                Rs[i].swap(Rs[i + 1]);
+                Rs[i].swap(Rs[i + 1]);//世界系下old冒泡
 
-                std::swap(pre_integrations[i], pre_integrations[i + 1]);
+                std::swap(pre_integrations[i], pre_integrations[i + 1]);//每一帧的预积分old冒泡
 
-                dt_buf[i].swap(dt_buf[i + 1]);
+                dt_buf[i].swap(dt_buf[i + 1]);//各种buf也冒泡
                 linear_acceleration_buf[i].swap(linear_acceleration_buf[i + 1]);
                 angular_velocity_buf[i].swap(angular_velocity_buf[i + 1]);
 
-                Headers[i] = Headers[i + 1];
+                Headers[i] = Headers[i + 1];//最后一个是 Headers[WINDOW_SIZE-1] = Headers[WINDOW_SIZE]
                 Ps[i].swap(Ps[i + 1]);
                 Vs[i].swap(Vs[i + 1]);
                 Bas[i].swap(Bas[i + 1]);
                 Bgs[i].swap(Bgs[i + 1]);
             }
+            //这一步是为了 new IntegrationBase时传入最新的预积分的初值acc_0, gyr_0，ba，bg，所以必须要强制等于最新的
             Headers[WINDOW_SIZE] = Headers[WINDOW_SIZE - 1];
             Ps[WINDOW_SIZE] = Ps[WINDOW_SIZE - 1];
             Vs[WINDOW_SIZE] = Vs[WINDOW_SIZE - 1];
@@ -1057,7 +1070,8 @@ void Estimator::slideWindow()
             Bas[WINDOW_SIZE] = Bas[WINDOW_SIZE - 1];
             Bgs[WINDOW_SIZE] = Bgs[WINDOW_SIZE - 1];
 
-            delete pre_integrations[WINDOW_SIZE];
+            //冒泡到最右边之后把对应的都delete&new或者clear掉
+            delete pre_integrations[WINDOW_SIZE];//delete掉，并new新的预积分对象出来
             pre_integrations[WINDOW_SIZE] = new IntegrationBase{acc_0, gyr_0, Bas[WINDOW_SIZE], Bgs[WINDOW_SIZE]};
 
             dt_buf[WINDOW_SIZE].clear();
@@ -1067,7 +1081,7 @@ void Estimator::slideWindow()
             if (true || solver_flag == INITIAL)
             {
                 map<double, ImageFrame>::iterator it_0;
-                it_0 = all_image_frame.find(t_0);
+                it_0 = all_image_frame.find(t_0);//t_0是最老帧的时间戳
                 delete it_0->second.pre_integration;
                 it_0->second.pre_integration = nullptr;
  
@@ -1078,30 +1092,34 @@ void Estimator::slideWindow()
                     it->second.pre_integration = NULL;
                 }
 
-                all_image_frame.erase(all_image_frame.begin(), it_0);
+                all_image_frame.erase(all_image_frame.begin(), it_0);//erase掉find到的iterator
                 all_image_frame.erase(t_0);
 
             }
-            slideWindowOld();
+            slideWindowOld();//求prior，删除某些变量
         }
     }
+    //如果2nd不是KF则直接扔掉1st的visual测量，并在2nd基础上对1st的IMU进行预积分，window前面的都不动
     else
     {
         if (frame_count == WINDOW_SIZE)
         {
-            for (unsigned int i = 0; i < dt_buf[frame_count].size(); i++)
+            for (unsigned int i = 0; i < dt_buf[frame_count].size(); i++)//对最新帧的img对应的imu数据进行循环
             {
                 double tmp_dt = dt_buf[frame_count][i];
                 Vector3d tmp_linear_acceleration = linear_acceleration_buf[frame_count][i];
                 Vector3d tmp_angular_velocity = angular_velocity_buf[frame_count][i];
 
-                pre_integrations[frame_count - 1]->push_back(tmp_dt, tmp_linear_acceleration, tmp_angular_velocity);
-
+                pre_integrations[frame_count - 1]->push_back(tmp_dt, tmp_linear_acceleration, tmp_angular_velocity);//2nd对1st进行IMU预积分
+                //imu数据保存，相当于一个较长的KF，eg：
+                //     |-|-|-|-|-----|
+                //                ↑
+                //            这段img为1st时，2nd不是KF，扔掉了这个1st的img，但buf了IMU数据，所以这段imu数据较长
                 dt_buf[frame_count - 1].push_back(tmp_dt);
                 linear_acceleration_buf[frame_count - 1].push_back(tmp_linear_acceleration);
                 angular_velocity_buf[frame_count - 1].push_back(tmp_angular_velocity);
             }
-
+            //相对世界系的预积分需要继承过来
             Headers[frame_count - 1] = Headers[frame_count];
             Ps[frame_count - 1] = Ps[frame_count];
             Vs[frame_count - 1] = Vs[frame_count];
@@ -1137,11 +1155,11 @@ void Estimator::slideWindowOld()
     {
         Matrix3d R0, R1;
         Vector3d P0, P1;
-        R0 = back_R0 * ric[0];
+        R0 = back_R0 * ric[0];//这可能是在求marg掉的变量留下来的prior
         R1 = Rs[0] * ric[0];
         P0 = back_P0 + back_R0 * tic[0];
         P1 = Ps[0] + Rs[0] * tic[0];
-        f_manager.removeBackShiftDepth(R0, P0, R1, P1);
+        f_manager.removeBackShiftDepth(R0, P0, R1, P1);//TODO：这个暂时不知道什么意思？
     }
     else
         f_manager.removeBack();

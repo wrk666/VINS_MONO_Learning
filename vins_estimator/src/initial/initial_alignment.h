@@ -19,10 +19,10 @@ class ImageFrame
             points = _points;
         };
         map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>> > > points;
-        double t;
-        Matrix3d R;
+        double t;//时间戳
+        Matrix3d R;//应该是这帧相对于上一帧的pose
         Vector3d T;
-        IntegrationBase *pre_integration;
+        IntegrationBase *pre_integration;//目前到这帧为止的IMU预积分
         bool is_key_frame;
 };
 

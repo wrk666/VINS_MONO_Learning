@@ -264,7 +264,7 @@ void process()
             {
                 double t = imu_msg->header.stamp.toSec();// 最新IMU数据的时间戳
                 double img_t = img_msg->header.stamp.toSec() + estimator.td;//用优化后的td来补偿Img时间戳
-                if (t <= img_t)//TDOO：为什么当IMU最后的时间戳小于img_t时，不对时间戳进行处理？
+                if (t <= img_t)
                 { 
                     if (current_time < 0) //第一次接受会这样
                         current_time = t;

@@ -229,8 +229,9 @@ bool GlobalSFM::construct(int frame_num, Quaterniond* q, Vector3d* T, int l,
 		cout << "solvePnP  t" << " i " << i <<"  " << t_tmp.x() <<"  "<< t_tmp.y() <<"  "<< t_tmp.z() << endl;
 	}
 */
-	//full BA
+	//full BA  构建BA问题
 	ceres::Problem problem;
+    //当四元数为优化的对象时，需要调用ceres::QuaternionParameterization来消除自由度冗余
 	ceres::LocalParameterization* local_parameterization = new ceres::QuaternionParameterization();
 	//cout << " begin full BA " << endl;
 	for (int i = 0; i < frame_num; i++)
@@ -247,7 +248,7 @@ bool GlobalSFM::construct(int frame_num, Quaterniond* q, Vector3d* T, int l,
 		problem.AddParameterBlock(c_translation[i], 3);
 		if (i == l)
 		{
-			problem.SetParameterBlockConstant(c_rotation[i]);
+			problem.SetParameterBlockConstant(c_rotation[i]);//固定住一些参数
 		}
 		if (i == l || i == frame_num - 1)
 		{
@@ -262,11 +263,15 @@ bool GlobalSFM::construct(int frame_num, Quaterniond* q, Vector3d* T, int l,
 		for (int j = 0; j < int(sfm_f[i].observation.size()); j++)
 		{
 			int l = sfm_f[i].observation[j].first;
+			//自定义cost function，这里使用的是自动求导，也可以自定义jacobian的计算方式
 			ceres::CostFunction* cost_function = ReprojectionError3D::Create(
 												sfm_f[i].observation[j].second.x(),
 												sfm_f[i].observation[j].second.y());
 
-    		problem.AddResidualBlock(cost_function, NULL, c_rotation[l], c_translation[l], 
+    		problem.AddResidualBlock(cost_function, //cost_function
+                                    NULL,           //loss_function,一般不用
+                                    c_rotation[l],  //后面这3个都是优化的初值，维度分别为4，3，3
+                                    c_translation[l],
     								sfm_f[i].position);	 
 		}
 

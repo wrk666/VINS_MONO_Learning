@@ -18,7 +18,7 @@ bool InitialEXRotation::CalibrationExRotation(vector<pair<Vector3d, Vector3d>> c
     //correspondents对数不小于9时求出Rt: 1.求取E，2.反解并test出4组Rt，3.使用三角化出的深度来判断正确的那组Rt
     //Rc即Rck_ck+1
     Rc.push_back(solveRelativeR(corres));
-    //Rimu即delta_q即qbk_bk+1即Rbk+1_bk
+    //Rimu即delta_q即qbk+1_bk即Rbk+1_bk
     Rimu.push_back(delta_q_imu.toRotationMatrix());
     //旋转约束：qbk_ck+1 = qbk_bk+1 * qbc = qbc * qck_ck+1,移项(左移右)即得residual=qbc^(-1)*qbk_bk+1^(-1) * qbc * qck_ck+1，
     //其中Rc=qck_ck+1，剩下的项就是qbc^(-1) * qbk_bk+1^(-1) * qbc = qcb * qbk_bk+1^(-1) * qcb^(-1)，记为Rc_g

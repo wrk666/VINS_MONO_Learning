@@ -51,6 +51,7 @@ class IntegrationBase
             propagate(dt_buf[i], acc_buf[i], gyr_buf[i]);
     }
 
+    //IMU预积分(中值积分法)，code中都是离散形式
     void midPointIntegration(double _dt, 
                             const Eigen::Vector3d &_acc_0, const Eigen::Vector3d &_gyr_0,
                             const Eigen::Vector3d &_acc_1, const Eigen::Vector3d &_gyr_1,
@@ -60,16 +61,19 @@ class IntegrationBase
                             Eigen::Vector3d &result_linearized_ba, Eigen::Vector3d &result_linearized_bg, bool update_jacobian)
     {
         //ROS_INFO("midpoint integration");
-        Vector3d un_acc_0 = delta_q * (_acc_0 - linearized_ba);
-        Vector3d un_gyr = 0.5 * (_gyr_0 + _gyr_1) - linearized_bg;
+        //见博客3.2节式(34)：https://blog.csdn.net/qq_37746927/article/details/130714626#t11
+        Vector3d un_acc_0 = delta_q * (_acc_0 - linearized_ba);//此时delta_q=qbi_bk
+        Vector3d un_gyr = 0.5 * (_gyr_0 + _gyr_1) - linearized_bg;//w=1/2*((wb_k - bgk)+(wb_k+1 - bgk)) = 1/2*(wb_k + wb_k+1) - bgk
+        //qbi_bk+1 = qbi_bk x Quaterniond(1, (w * delta_t)/2)
         result_delta_q = delta_q * Quaterniond(1, un_gyr(0) * _dt / 2, un_gyr(1) * _dt / 2, un_gyr(2) * _dt / 2);
-        Vector3d un_acc_1 = result_delta_q * (_acc_1 - linearized_ba);
+        Vector3d un_acc_1 = result_delta_q * (_acc_1 - linearized_ba);//此时delta_q=qbi_bk+1
         Vector3d un_acc = 0.5 * (un_acc_0 + un_acc_1);
         result_delta_p = delta_p + delta_v * _dt + 0.5 * un_acc * _dt * _dt;
         result_delta_v = delta_v + un_acc * _dt;
-        result_linearized_ba = linearized_ba;
-        result_linearized_bg = linearized_bg;         
+        result_linearized_ba = linearized_ba;//忽略噪声n，认为k+1时刻的bias和k时刻相等
+        result_linearized_bg = linearized_bg;
 
+        //更新预积分的Jacobian（暂时不看）
         if(update_jacobian)
         {
             Vector3d w_x = 0.5 * (_gyr_0 + _gyr_1) - linearized_bg;
@@ -132,12 +136,14 @@ class IntegrationBase
         dt = _dt;
         acc_1 = _acc_1;
         gyr_1 = _gyr_1;
+        //下面5个是预积分的结果
         Vector3d result_delta_p;
         Quaterniond result_delta_q;
         Vector3d result_delta_v;
         Vector3d result_linearized_ba;
         Vector3d result_linearized_bg;
 
+        //中值积分进行IMU预积分和Jacobian的更新
         midPointIntegration(_dt, acc_0, gyr_0, _acc_1, _gyr_1, delta_p, delta_q, delta_v,
                             linearized_ba, linearized_bg,
                             result_delta_p, result_delta_q, result_delta_v,
@@ -150,13 +156,14 @@ class IntegrationBase
         delta_v = result_delta_v;
         linearized_ba = result_linearized_ba;
         linearized_bg = result_linearized_bg;
-        delta_q.normalize();
-        sum_dt += dt;
-        acc_0 = acc_1;
+        delta_q.normalize();//四元数归一化
+        sum_dt += dt;//统计总耗时
+        acc_0 = acc_1;//更新初始时刻IMU数据
         gyr_0 = gyr_1;  
      
     }
 
+    // 计算IMU观测残差
     Eigen::Matrix<double, 15, 1> evaluate(const Eigen::Vector3d &Pi, const Eigen::Quaterniond &Qi, const Eigen::Vector3d &Vi, const Eigen::Vector3d &Bai, const Eigen::Vector3d &Bgi,
                                           const Eigen::Vector3d &Pj, const Eigen::Quaterniond &Qj, const Eigen::Vector3d &Vj, const Eigen::Vector3d &Baj, const Eigen::Vector3d &Bgj)
     {
@@ -189,20 +196,22 @@ class IntegrationBase
     Eigen::Vector3d acc_0, gyr_0;// 前一帧IMU数据中的加速度计测量值和陀螺仪测量值
     Eigen::Vector3d acc_1, gyr_1;// 后一帧IMU数据中的加速度计测量值和陀螺仪测量值
 
-    const Eigen::Vector3d linearized_acc, linearized_gyr; // 这一段预积分初始时刻的IMU测量值，作为常量一直保存，在IntegrationBase对象创建时指定(这个量有什么用吗？在测量改变的时候可以将改变后的量直接乘以预计分量，不用再去积分了？)
+    const Eigen::Vector3d linearized_acc, linearized_gyr; // 两帧Img之间的这一段预积分初始时刻的IMU测量值，作为常量一直保存，在IntegrationBase对象创建时指定，在repropogate时重新给acc_0，gyro_0赋值，用于重新传递
     Eigen::Vector3d linearized_ba, linearized_bg; // 这一段预积分对应的加速度计偏置和陀螺仪偏置
 
+    //关于这里Jacobian的维度：误差是15维：pvq分别都是3维，两个bias也都是3维，共15维
     Eigen::Matrix<double, 15, 15> jacobian, covariance;
     Eigen::Matrix<double, 15, 15> step_jacobian;
+    //这为什么是18维？
     Eigen::Matrix<double, 15, 18> step_V;
     Eigen::Matrix<double, 18, 18> noise;
 
     double sum_dt; // 这一段预积分的总时间间隔
 
-    // delta_p、delta_q和delta_v是标称状态的预积分
-    // delta_p表示该段预积分初始时刻本体坐标系下，当前时刻本体坐标系的位置 即αbk+1_bk
-    // delta_q表示该段预积分初始时刻本体坐标系下，当前时刻本体坐标系的旋转 即qbk+1_bk
-    // delta_v表示该段预积分初始时刻本体坐标系下，当前时刻本体坐标系的速度 即βbk+1_bk
+    // delta_p、delta_q和delta_v是标称状态的预积分.假设两帧Img的index分别为ij(i<j)，则
+    // delta_p表示αbj_bi
+    // delta_q表示qbj_bi
+    // delta_v表示βbj_bi
     Eigen::Vector3d delta_p;
     Eigen::Quaterniond delta_q;
     Eigen::Vector3d delta_v;
@@ -213,7 +222,7 @@ class IntegrationBase
 
 };
 
-//欧拉积分，应该是吧初始时刻的导数作为这一段的导数来近似使用
+//欧拉积分，应该是把初始时刻的导数作为这一段的导数来近似使用
 /*
 
     void eulerIntegration(double _dt, const Eigen::Vector3d &_acc_0, const Eigen::Vector3d &_gyr_0,
