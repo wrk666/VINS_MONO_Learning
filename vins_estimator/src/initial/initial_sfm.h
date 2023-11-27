@@ -18,7 +18,7 @@ struct SFMFeature
     bool state;//状态（是否被三角化）
     int id;
     vector<pair<int,Vector2d>> observation;//所有观测到该特征点的图像帧ID和图像坐标
-    double position[3];//3d坐标
+    double position[3];//3D landmark坐标
     double depth;//深度
 };
 
@@ -46,7 +46,7 @@ struct ReprojectionError3D
 	static ceres::CostFunction* Create(const double observed_x,
 	                                   const double observed_y) 
 	{
-        //输出维度(residual维度)2，输入维度4，3，3
+      //输出维度(residual维度)2，输出维度2(u,v重投影残差)，输入维度4，3，3(待优化量的维度)
 	  return (new ceres::AutoDiffCostFunction<
 	          ReprojectionError3D, 2, 4, 3, 3>(
 	          	new ReprojectionError3D(observed_x,observed_y)));

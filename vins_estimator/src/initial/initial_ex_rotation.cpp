@@ -116,11 +116,11 @@ Matrix3d InitialEXRotation::solveRelativeR(const vector<pair<Vector3d, Vector3d>
         cv::Mat_<double> R1, R2, t1, t2;
         decomposeE(E, R1, R2, t1, t2);
 
-        //这应该是什么判断
+        //这应该是什么判断，矩阵行列式值+1<1e-09，看不懂
         if (determinant(R1) + 1.0 < 1e-09)
         {
             E = -E;
-            decomposeE(E, R1, R2, t1, t2);
+            decomposeE(E, R1, R2, t1, t2);//算出来的是两组第1帧->第2帧的Rt
         }
         //用四个解分别进行Triangulation，带入points，求深度为正的比例，取比例最大的作为正确的Rt解
         double ratio1 = max(testTriangulation(ll, rr, R1, t1), testTriangulation(ll, rr, R1, t2));

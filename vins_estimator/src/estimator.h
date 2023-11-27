@@ -120,6 +120,8 @@ class Estimator
     MarginalizationInfo *last_marginalization_info;
     vector<double *> last_marginalization_parameter_blocks;
 
+    // 存储所有的ImageFrame对象（每读取一帧图像就会构建ImageFrame对象）
+    //时间戳map映射ImgFrame，ImageFrame是里面有该帧pose，有该帧预积分,有所有feature_id->features的mapfeatures是pair<camera_id, Mat<7,1>>
     map<double, ImageFrame> all_image_frame;
     IntegrationBase *tmp_pre_integration;//单帧临时的预积分的指针,和pre_integrations同一时间进行积分，用于在创建ImageFrame对象时，把该指针赋给该帧图像对应的pre_integration
 
