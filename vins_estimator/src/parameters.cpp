@@ -82,7 +82,7 @@ void readParameters(ros::NodeHandle &n)
     ACC_W = fsSettings["acc_w"];
     GYR_N = fsSettings["gyr_n"];
     GYR_W = fsSettings["gyr_w"];
-    G.z() = fsSettings["g_norm"];
+    G.z() = fsSettings["g_norm"];//这里设置重力向量为(0,0,9.81007)
     ROW = fsSettings["image_height"];
     COL = fsSettings["image_width"];
     ROS_INFO("ROW: %f COL: %f ", ROW, COL);

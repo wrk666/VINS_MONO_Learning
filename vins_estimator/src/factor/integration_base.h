@@ -99,7 +99,7 @@ class IntegrationBase
             F.block<3, 3>(0, 9) = -0.25 * (delta_q.toRotationMatrix() + result_delta_q.toRotationMatrix()) * _dt * _dt;
             F.block<3, 3>(0, 12) = -0.25 * result_delta_q.toRotationMatrix() * R_a_1_x * _dt * _dt * -_dt;
             F.block<3, 3>(3, 3) = Matrix3d::Identity() - R_w_x * _dt;
-            F.block<3, 3>(3, 12) = -1.0 * MatrixXd::Identity(3,3) * _dt;
+            F.block<3, 3>(3, 12) = -1.0 * MatrixXd::Identity(3,3) * _dt;//f25，在估计gyro bias时用到了
             F.block<3, 3>(6, 3) = -0.5 * delta_q.toRotationMatrix() * R_a_0_x * _dt + 
                                   -0.5 * result_delta_q.toRotationMatrix() * R_a_1_x * (Matrix3d::Identity() - R_w_x * _dt) * _dt;
             F.block<3, 3>(6, 6) = Matrix3d::Identity();

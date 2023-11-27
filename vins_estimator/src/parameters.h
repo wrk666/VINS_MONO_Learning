@@ -47,7 +47,7 @@ enum SIZE_PARAMETERIZATION
     SIZE_SPEEDBIAS = 9,
     SIZE_FEATURE = 1
 };
-
+//预积分变量的Jacobian的维度总共15维
 enum StateOrder
 {
     O_P = 0,

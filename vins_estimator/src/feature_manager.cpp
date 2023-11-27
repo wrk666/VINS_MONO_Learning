@@ -30,12 +30,12 @@ void FeatureManager::clearState()
 int FeatureManager::getFeatureCount()
 {
     int cnt = 0;
-    for (auto &it : feature)//遍历sliding window内所有frame
+    for (auto &it : feature)//遍历WINDOW内的所有feature_id，查看可用的feature种类
     {
 
         it.used_num = it.feature_per_frame.size();
-
-        if (it.used_num >= 2 && it.start_frame < WINDOW_SIZE - 2) //如果feature数量不少于2且start_frame小于倒数第二帧（为啥是倒数第二帧？应该是为了计算视察）
+        //如果feature数量不少于2且start_frame小于倒数第二帧（为啥是倒数第二帧？应该是为了保证tracking上以能够三角化出深度）
+        if (it.used_num >= 2 && it.start_frame < WINDOW_SIZE - 2)
         {
             cnt++;
         }
@@ -202,18 +202,18 @@ void FeatureManager::clearDepth(const VectorXd &x)
         it_per_id.used_num = it_per_id.feature_per_frame.size();
         if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
             continue;
-        it_per_id.estimated_depth = 1.0 / x(++feature_index);
+        it_per_id.estimated_depth = 1.0 / x(++feature_index);//重新赋深度
     }
 }
 
 VectorXd FeatureManager::getDepthVector()
 {
-    VectorXd dep_vec(getFeatureCount());
+    VectorXd dep_vec(getFeatureCount());//获取观测到的landmark的数量，并按照此数量定义一个Vector，用于存放逆深度
     int feature_index = -1;
     for (auto &it_per_id : feature)
     {
         it_per_id.used_num = it_per_id.feature_per_frame.size();
-        if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
+        if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))//跳过无效feature(不可能Triangulate出深度的点)
             continue;
 #if 1
         dep_vec(++feature_index) = 1. / it_per_id.estimated_depth;
@@ -231,7 +231,7 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
         it_per_id.used_num = it_per_id.feature_per_frame.size();
         if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
             continue;
-
+        //跳过深度为正的点
         if (it_per_id.estimated_depth > 0)
             continue;
         int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
@@ -240,12 +240,14 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
         Eigen::MatrixXd svd_A(2 * it_per_id.feature_per_frame.size(), 4);
         int svd_idx = 0;
 
+        //P0设为Identity()的T
         Eigen::Matrix<double, 3, 4> P0;
-        Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0];
+        Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0];//这个看起来Rs应该是Rc0_bk------------------看到这了
         Eigen::Matrix3d R0 = Rs[imu_i] * ric[0];
         P0.leftCols<3>() = Eigen::Matrix3d::Identity();
         P0.rightCols<1>() = Eigen::Vector3d::Zero();
 
+        //构建Dy=0矩阵，SVD求解
         for (auto &it_per_frame : it_per_id.feature_per_frame)
         {
             imu_j++;
@@ -258,6 +260,7 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
             P.leftCols<3>() = R.transpose();
             P.rightCols<1>() = -R.transpose() * t;
             Eigen::Vector3d f = it_per_frame.point.normalized();
+            //
             svd_A.row(svd_idx++) = f[0] * P.row(2) - f[2] * P.row(0);
             svd_A.row(svd_idx++) = f[1] * P.row(2) - f[2] * P.row(1);
 

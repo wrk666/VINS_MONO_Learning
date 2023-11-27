@@ -18,11 +18,12 @@ bool InitialEXRotation::CalibrationExRotation(vector<pair<Vector3d, Vector3d>> c
     //correspondents对数不小于9时求出Rt: 1.求取E，2.反解并test出4组Rt，3.使用三角化出的深度来判断正确的那组Rt
     //Rc即Rck_ck+1
     Rc.push_back(solveRelativeR(corres));
-    //Rimu即delta_q即qbk+1_bk即Rbk+1_bk
+    //Rimu即delta_q即βbk_bk+1即Rbk+1_bk（预计分量下标的读取是从左到右）
     Rimu.push_back(delta_q_imu.toRotationMatrix());
     //旋转约束：qbk_ck+1 = qbk_bk+1 * qbc = qbc * qck_ck+1,移项(左移右)即得residual=qbc^(-1)*qbk_bk+1^(-1) * qbc * qck_ck+1，
-    //其中Rc=qck_ck+1，剩下的项就是qbc^(-1) * qbk_bk+1^(-1) * qbc = qcb * qbk_bk+1^(-1) * qcb^(-1)，记为Rc_g
+    //其中Rc=qck_ck+1，剩下的项就是qbc^(-1) * qbk_bk+1^(-1) * qbc = qcb * qbk+1_bk * qcb^(-1)，记为Rc_g
     //上式左边是rbc版本构建A时L为IMU，右边是rcb版本，构建A时L为camera，这里采用了后者rcb，L为camera
+    //注意这里下标不一样，PVQ预积分下标都是从左往右读，而正常的旋转是从右往左读，所以上面的Rc_g = qcb * qbk+1_bk * qcb^(-1)中，qbk+1_bk对应预积分就是βbk_bk+1
     Rc_g.push_back(ric.inverse() * delta_q_imu * ric);//Rc_g * Rc就是整个左移右的residual
 
     //构建A矩阵

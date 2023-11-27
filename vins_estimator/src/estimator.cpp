@@ -159,7 +159,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
             vector<pair<Vector3d, Vector3d>> corres = f_manager.getCorresponding(frame_count - 1, frame_count);
             Matrix3d calib_ric;
             //旋转约束+SVD分解求取Ric旋转外参
-            //delta_q即qbk+1_bk,是从k时刻积分到k+1，所以是qbk+1_bk
+            //delta_q即qbk_bk+1,是从k时刻积分到k+1，所以是qbk_bk+1(从左往右读)
             if (initial_ex_rotation.CalibrationExRotation(corres, pre_integrations[frame_count]->delta_q, calib_ric))
             {
                 ROS_WARN("initial extrinsic rotation calib success");
@@ -290,7 +290,7 @@ bool Estimator::initialStructure()
     Matrix3d relative_R;
     Vector3d relative_T;
     int l;
-    //选择window内第一个满足“tracking数量>20,平均视差>30”的帧(l)与最新帧之间的relative pose，是从最新帧到第l帧
+    //选择window内第一个满足“tracking数量>20,平均视差>30”的帧(l)与最新帧之间的relative pose，是从最新帧到第l帧Tl_cur，就是下面的Tw_cur
     if (!relativePose(relative_R, relative_T, l))
     {
         ROS_INFO("Not enough features or parallax; Move device around");
@@ -321,7 +321,7 @@ bool Estimator::initialStructure()
     {
         // provide initial guess
         cv::Mat r, rvec, t, D, tmp_r;
-        if((frame_it->first) == Headers[i].stamp.toSec()) // all_image_frame与滑动窗口中对应的帧
+        if((frame_it->first) == Headers[i].stamp.toSec()) // all_image_frame与滑动窗口中对应的帧，SfM阶段已经计算过，无需再次计算
         {
             frame_it->second.is_key_frame = true;// 滑动窗口中所有帧都是关键帧
             frame_it->second.R = Q[i].toRotationMatrix() * RIC[0].transpose();// 根据各帧相机坐标系的姿态和外参，得到用各帧IMU坐标系的姿态（对应VINS Mono论文(2018年的期刊版论文)中的公式（6））。
@@ -346,12 +346,12 @@ bool Estimator::initialStructure()
         for (auto &id_pts : frame_it->second.points) // 对于该帧中的特征点
         {
             int feature_id = id_pts.first;// 特征点id
-            for (auto &i_p : id_pts.second)//// 由于可能有多个相机，所以需要遍历。i_p对应着一个相机所拍图像帧的特征点信息
+            for (auto &i_p : id_pts.second)// 由于可能有多个相机，所以需要遍历。i_p对应着一个相机所拍图像帧的特征点信息
             {
                 it = sfm_tracked_points.find(feature_id);
                 if(it != sfm_tracked_points.end())//如果找到了已经Triangulation的,说明在sfm_tracked_points中找到了相应的3D点
                 {
-                    // 记录该id特征点的3D位置
+                    // 记录该已被Triangulated的id特征点的3D位置
                     Vector3d world_pts = it->second;
                     cv::Point3f pts_3(world_pts(0), world_pts(1), world_pts(2));
                     pts_3_vector.push_back(pts_3);
@@ -385,7 +385,7 @@ bool Estimator::initialStructure()
         frame_it->second.R = R_pnp * RIC[0].transpose(); // 根据各帧相机坐标系的姿态和外参，得到用各帧IMU坐标系的姿态。
         frame_it->second.T = T_pnp;
     }
-    if (visualInitialAlign())//视觉惯性对齐
+    if (visualInitialAlign())//视觉惯性对齐:bg，gc0，s，v的估计
         return true;
     else
     {
@@ -399,7 +399,7 @@ bool Estimator::visualInitialAlign()
 {
     TicToc t_g;
     VectorXd x;
-    //solve scale
+    //估计陀螺仪的偏置，速度、重力和尺度初始化，重力细化
     bool result = VisualIMUAlignment(all_image_frame, Bgs, g, x);
     if(!result)
     {
@@ -407,20 +407,27 @@ bool Estimator::visualInitialAlign()
         return false;
     }
 
+    //原文：we can get the rotation qw c0 between the world frame and the
+    //camera frame c0 by rotating the gravity to the z-axis. We then
+    //rotate all variables from the reference frame (·)c0 to the world
+    //frame (·)w. we can get the rotation qw c0 between the world frame and the
+    //camera frame c0 by rotating the gravity to the z-axis. We then
+    //rotate all variables from the reference frame (·)c0 to the world
+    //frame (·)w.
     // change state
     for (int i = 0; i <= frame_count; i++)
     {
-        Matrix3d Ri = all_image_frame[Headers[i].stamp.toSec()].R;
+        Matrix3d Ri = all_image_frame[Headers[i].stamp.toSec()].R;//相对于l帧的pose
         Vector3d Pi = all_image_frame[Headers[i].stamp.toSec()].T;
-        Ps[i] = Pi;
+        Ps[i] = Pi;//保存的是相对于world系的pose
         Rs[i] = Ri;
         all_image_frame[Headers[i].stamp.toSec()].is_key_frame = true;
     }
 
-    VectorXd dep = f_manager.getDepthVector();
+    VectorXd dep = f_manager.getDepthVector();//获取WINDOW内所有成功Triangulated出深度的landmark，求其逆深度
     for (int i = 0; i < dep.size(); i++)
         dep[i] = -1;
-    f_manager.clearDepth(dep);
+    f_manager.clearDepth(dep);//重新赋深度
 
     //triangulat on cam pose , no tic
     Vector3d TIC_TMP[NUM_OF_CAM];
@@ -428,15 +435,17 @@ bool Estimator::visualInitialAlign()
         TIC_TMP[i].setZero();
     ric[0] = RIC[0];
     f_manager.setRic(ric);
-    f_manager.triangulate(Ps, &(TIC_TMP[0]), &(RIC[0]));
+    f_manager.triangulate(Ps, &(TIC_TMP[0]), &(RIC[0]));//Ps相对第一帧的位置α(这是在三角化之前三角化失败的点？？？看不懂)
 
     double s = (x.tail<1>())(0);
     for (int i = 0; i <= WINDOW_SIZE; i++)
     {
-        //对每一帧camera之间的IMNU数据重新进行积分，比IMU两帧之间粒度大一些
+        //对每一帧camera之间的IMU数据重新进行积分，比IMU两帧之间粒度大一些
         pre_integrations[i]->repropagate(Vector3d::Zero(), Bgs[i]);
     }
     for (int i = frame_count; i >= 0; i--)
+        //论文式(6)
+        //看起来Rs应该是Rc0_bk(这个时候c0应该还没变为world，所以应该是在恢复米制单位)
         Ps[i] = s * Ps[i] - Rs[i] * TIC[0] - (s * Ps[0] - Rs[0] * TIC[0]);
     int kv = -1;
     map<double, ImageFrame>::iterator frame_i;
