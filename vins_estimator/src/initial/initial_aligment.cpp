@@ -51,10 +51,10 @@ MatrixXd TangentBasis(Vector3d &g0)
     // tmp2与a垂直，是a的正切空间的一个基向量，归一化之后就是单位基向量b，与a叉乘之后就得第二个单位基向量c
     b = (tmp - a * (a.transpose() * tmp)).normalized();//它是 tmp 减去在 a 方向上的投影，并进行归一化。
     Vector3d tmp_b = a.cross(tmp).normalized();
-    ROS_DEBUG_STREAM("g0: " << g0.transpose() <<
-                          "   a:" << a.transpose() <<
-                          "   b from author's code: " << b.transpose() <<
-                          "   b from my corss multiply: " << tmp_b.transpose());
+//    ROS_DEBUG_STREAM("g0: " << g0.transpose() <<
+//                          "   a:" << a.transpose() <<
+//                          "   b from author's code: " << b.transpose() <<
+//                          "   b from my corss multiply: " << tmp_b.transpose());
     c = a.cross(b);
     MatrixXd bc(3, 2);
     bc.block<3, 1>(0, 0) = b;

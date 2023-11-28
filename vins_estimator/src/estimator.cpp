@@ -382,7 +382,7 @@ bool Estimator::initialStructure()
         MatrixXd T_pnp;
         cv::cv2eigen(t, T_pnp);
         T_pnp = R_pnp * (-T_pnp);
-        frame_it->second.R = R_pnp * RIC[0].transpose(); // 根据各帧相机坐标系的姿态和外参，得到用各帧IMU坐标系的姿态。
+        frame_it->second.R = R_pnp * RIC[0].transpose(); // Tc0_ck * Tbc^(-1) = Tc0_bk转到c0系下看bk
         frame_it->second.T = T_pnp;
     }
     if (visualInitialAlign())//视觉惯性对齐:bg，gc0，s，v的估计
@@ -398,7 +398,7 @@ bool Estimator::initialStructure()
 bool Estimator::visualInitialAlign()
 {
     TicToc t_g;
-    VectorXd x;
+    VectorXd x;//待优化变量[vk,vk+1,w,s],维度是(all_image_frame.size() * 3 + 2 + 1)
     //估计陀螺仪的偏置，速度、重力和尺度初始化，重力细化
     bool result = VisualIMUAlignment(all_image_frame, Bgs, g, x);
     if(!result)
@@ -410,43 +410,54 @@ bool Estimator::visualInitialAlign()
     //原文：we can get the rotation qw c0 between the world frame and the
     //camera frame c0 by rotating the gravity to the z-axis. We then
     //rotate all variables from the reference frame (·)c0 to the world
-    //frame (·)w. we can get the rotation qw c0 between the world frame and the
-    //camera frame c0 by rotating the gravity to the z-axis. We then
-    //rotate all variables from the reference frame (·)c0 to the world
     //frame (·)w.
-    // change state
+    // change state(以下仅对WINDOW内的frame进行操作)
     for (int i = 0; i <= frame_count; i++)
     {
-        Matrix3d Ri = all_image_frame[Headers[i].stamp.toSec()].R;//相对于l帧的pose
-        Vector3d Pi = all_image_frame[Headers[i].stamp.toSec()].T;
-        Ps[i] = Pi;//保存的是相对于world系的pose
+        Matrix3d Ri = all_image_frame[Headers[i].stamp.toSec()].R;//IMU相对于world(即c0,此时还是l帧)的pose:Tc0_bk
+        Vector3d Pi = all_image_frame[Headers[i].stamp.toSec()].T;//Rc0_bk
+        Ps[i] = Pi;
         Rs[i] = Ri;
         all_image_frame[Headers[i].stamp.toSec()].is_key_frame = true;
     }
 
+    //1.梳理一下：此时all_image_frame[Headers[i].stamp.toSec()].R，T都是Tc0_bk
+    //所以Ps,Rs也都是Tc0_bk
+
+    //将三角化出的深度均设为-1，重新三角化
     VectorXd dep = f_manager.getDepthVector();//获取WINDOW内所有成功Triangulated出深度的landmark，求其逆深度
     for (int i = 0; i < dep.size(); i++)
         dep[i] = -1;
-    f_manager.clearDepth(dep);//重新赋深度
+    f_manager.clearDepth(dep);//重新赋深度(都是-1)
 
     //triangulat on cam pose , no tic
+    //平移tic未标定，设为0
     Vector3d TIC_TMP[NUM_OF_CAM];
     for(int i = 0; i < NUM_OF_CAM; i++)
         TIC_TMP[i].setZero();
     ric[0] = RIC[0];
     f_manager.setRic(ric);
-    f_manager.triangulate(Ps, &(TIC_TMP[0]), &(RIC[0]));//Ps相对第一帧的位置α(这是在三角化之前三角化失败的点？？？看不懂)
+    f_manager.triangulate(Ps, &(TIC_TMP[0]), &(RIC[0]));//Ps是tc0_bk(里面要转为tc_ck使用)
 
-    double s = (x.tail<1>())(0);
+    double s = (x.tail<1>())(0);//取优化出的scale
+    //gyro bias bg改变了，需要重新IMU预积分
     for (int i = 0; i <= WINDOW_SIZE; i++)
     {
-        //对每一帧camera之间的IMU数据重新进行积分，比IMU两帧之间粒度大一些
+        //对每两帧camera之间的IMU数据重新进行积分(每次积分的观测初值(acc_0,gyro_0)仍然使用之前保存的linearized_acc, linearized_gyro)
         pre_integrations[i]->repropagate(Vector3d::Zero(), Bgs[i]);
     }
-    for (int i = frame_count; i >= 0; i--)
-        //论文式(6)
-        //看起来Rs应该是Rc0_bk(这个时候c0应该还没变为world，所以应该是在恢复米制单位)
-        Ps[i] = s * Ps[i] - Rs[i] * TIC[0] - (s * Ps[0] - Rs[0] * TIC[0]);
+    ROS_INFO_STREAM("TIC[0]:\n" << TIC[0].transpose());
+
+    //2.这里将Ps转换为tb0_bk
+    for (int i = frame_count; i >= 0; i--) {
+        //论文式(6)，看起来Rs应该是Rc0_bk(这个时候c0应该还没变为world，所以应该是在恢复米制单位)
+        Ps[i] = s * Ps[i] - Rs[i] * TIC[0] - (s * Ps[0] - Rs[0] * TIC[0]);//这里输入的Ps还是tc0_bk,输出的Ps是(c0)tb0_bk，是在c0系下看的这个translation
+        //TIC[0]为0代表第一项 s * Ps[i] - Rs[i] * TIC[0]=s*Ps[i]，即s*tc0_bk=s*tc0_ck(因为此时Ps=tc0_bk)
+        ROS_INFO_STREAM("TIC[0]:\n" << TIC[0].transpose()
+                        << "\ns * Ps[i] - Rs[i] * TIC[0]:\n" << (s * Ps[i] - Rs[i] * TIC[0]).transpose()
+                        << "\ns * Ps[i]:\n" << (s * Ps[i]).transpose());
+    }
+
     int kv = -1;
     map<double, ImageFrame>::iterator frame_i;
     for (frame_i = all_image_frame.begin(); frame_i != all_image_frame.end(); frame_i++)
@@ -454,7 +465,7 @@ bool Estimator::visualInitialAlign()
         if(frame_i->second.is_key_frame)
         {
             kv++;
-            Vs[kv] = frame_i->second.R * x.segment<3>(kv * 3);
+            Vs[kv] = frame_i->second.R * x.segment<3>(kv * 3);//更新bk系下的速度：(bk)vk
         }
     }
     for (auto &it_per_id : f_manager.feature)
@@ -462,20 +473,23 @@ bool Estimator::visualInitialAlign()
         it_per_id.used_num = it_per_id.feature_per_frame.size();
         if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
             continue;
-        it_per_id.estimated_depth *= s;
+        it_per_id.estimated_depth *= s;//恢复真实世界下尺度的深度
     }
 
-    Matrix3d R0 = Utility::g2R(g);
+    //g是world系下的重力向量，Rs[0]是Rc0_b0
+    ROS_INFO_STREAM("\nRs[0] is Rc0_b0:\n" << Rs[0]
+                        <<"\nRbc^T:\n" << RIC[0].transpose());
+    Matrix3d R0 = Utility::g2R(g);//求出gc0->gw(0,0,1)的pitch和roll方向的旋转R0
     double yaw = Utility::R2ypr(R0 * Rs[0]).x();
     R0 = Utility::ypr2R(Eigen::Vector3d{-yaw, 0, 0}) * R0;
-    g = R0 * g;
+    g = R0 * g;//g旋转到world系：Rwc0*g^(c0)=g^w
     //Matrix3d rot_diff = R0 * Rs[0].transpose();
     Matrix3d rot_diff = R0;
     for (int i = 0; i <= frame_count; i++)
     {
         Ps[i] = rot_diff * Ps[i];
         Rs[i] = rot_diff * Rs[i];
-        Vs[i] = rot_diff * Vs[i];
+        Vs[i] = rot_diff * Vs[i];//vb0_bk
     }
     ROS_DEBUG_STREAM("g0     " << g.transpose());
     ROS_DEBUG_STREAM("my R0  " << Utility::R2ypr(Rs[0]).transpose()); 
@@ -1095,8 +1109,8 @@ void Estimator::slideWindow()
             dt_buf[WINDOW_SIZE].clear();
             linear_acceleration_buf[WINDOW_SIZE].clear();
             angular_velocity_buf[WINDOW_SIZE].clear();
-            ROS_DEBUG("marg_flag: %d, before marg, all_image_frame.size(): %lu, WINDOW_SIZE: %d",
-                      marginalization_flag, all_image_frame.size(), WINDOW_SIZE);
+//            ROS_DEBUG("marg_flag: %d, before marg, all_image_frame.size(): %lu, WINDOW_SIZE: %d",
+//                      marginalization_flag, all_image_frame.size(), WINDOW_SIZE);
             if (true || solver_flag == INITIAL)
             {
                 map<double, ImageFrame>::iterator it_0;
@@ -1116,8 +1130,8 @@ void Estimator::slideWindow()
 
             }
             slideWindowOld();//求prior，删除某些变量
-            ROS_DEBUG("marg_flag: %d, after marg, all_image_frame.size(): %lu, WINDOW_SIZE: %d",
-                      marginalization_flag, all_image_frame.size(), WINDOW_SIZE);
+//            ROS_DEBUG("marg_flag: %d, after marg, all_image_frame.size(): %lu, WINDOW_SIZE: %d",
+//                      marginalization_flag, all_image_frame.size(), WINDOW_SIZE);
         }
     }
     //如果2nd不是KF则直接扔掉1st的visual测量，并在2nd基础上对1st的IMU进行预积分，window前面的都不动
@@ -1125,8 +1139,8 @@ void Estimator::slideWindow()
     {
         if (frame_count == WINDOW_SIZE)
         {
-            ROS_DEBUG("marg_flag: %d, before marg, all_image_frame.size(): %lu, WINDOW_SIZE: %d",
-                      marginalization_flag, all_image_frame.size(), WINDOW_SIZE);
+//            ROS_DEBUG("marg_flag: %d, before marg, all_image_frame.size(): %lu, WINDOW_SIZE: %d",
+//                      marginalization_flag, all_image_frame.size(), WINDOW_SIZE);
             for (unsigned int i = 0; i < dt_buf[frame_count].size(); i++)//对最新帧的img对应的imu数据进行循环
             {
                 double tmp_dt = dt_buf[frame_count][i];
@@ -1158,8 +1172,8 @@ void Estimator::slideWindow()
             angular_velocity_buf[WINDOW_SIZE].clear();
 
             slideWindowNew();
-            ROS_DEBUG("marg_flag: %d, after marg, all_image_frame.size(): %lu, WINDOW_SIZE: %d",
-                      marginalization_flag, all_image_frame.size(), WINDOW_SIZE);
+//            ROS_DEBUG("marg_flag: %d, after marg, all_image_frame.size(): %lu, WINDOW_SIZE: %d",
+//                      marginalization_flag, all_image_frame.size(), WINDOW_SIZE);
         }
 
     }

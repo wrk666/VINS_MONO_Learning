@@ -224,14 +224,16 @@ VectorXd FeatureManager::getDepthVector()
     return dep_vec;
 }
 
+//松耦合三角化，不假设观测是在归一化平面上
 void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
 {
-    for (auto &it_per_id : feature)
+    for (auto &it_per_id : feature)//WINDOW内的所有特征点
     {
         it_per_id.used_num = it_per_id.feature_per_frame.size();
+        //至少被测到2次 && 且观测到该特征点的第一帧图像应该早于或等于滑动窗口第4最新关键帧
         if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
             continue;
-        //跳过深度为正的点
+        //跳过深度为正的点，负深度是需要重新估计的点
         if (it_per_id.estimated_depth > 0)
             continue;
         int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
@@ -240,27 +242,33 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
         Eigen::MatrixXd svd_A(2 * it_per_id.feature_per_frame.size(), 4);
         int svd_idx = 0;
 
-        //P0设为Identity()的T
+        //P0设为Identity()的T，但是侯后面没用
         Eigen::Matrix<double, 3, 4> P0;
-        Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0];//这个看起来Rs应该是Rc0_bk------------------看到这了
+        Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0];//Rc0_bk*tbc + tc0_bk即Tc0_bk * Tbc = Tc0_ck = Tc0_ci，从IMU系再转回camera系
         Eigen::Matrix3d R0 = Rs[imu_i] * ric[0];
+        //这里我猜测应该是想用P0作为c0帧，但是后面也没用P0，而且按照这代码中的逻辑解释，求出的深度都是在所谓的[R0, t0]这个帧下的深度，根本不是在c0帧下的深度
         P0.leftCols<3>() = Eigen::Matrix3d::Identity();
         P0.rightCols<1>() = Eigen::Vector3d::Zero();
-
+        ROS_DEBUG_STREAM("P0:\n" << P0 <<"\nR0:\n" << R0 << "\nt0:\n" << t0.transpose());
         //构建Dy=0矩阵，SVD求解
-        for (auto &it_per_frame : it_per_id.feature_per_frame)
+        for (auto &it_per_frame : it_per_id.feature_per_frame)//遍历该id对应的所有不同帧上对此landmark的观测
         {
             imu_j++;
 
-            Eigen::Vector3d t1 = Ps[imu_j] + Rs[imu_j] * tic[0];
+            Eigen::Vector3d t1 = Ps[imu_j] + Rs[imu_j] * tic[0];//Tc0_cj
             Eigen::Matrix3d R1 = Rs[imu_j] * ric[0];
             Eigen::Vector3d t = R0.transpose() * (t1 - t0);
-            Eigen::Matrix3d R = R0.transpose() * R1;
+            Eigen::Matrix3d R = R0.transpose() * R1;//Tc0_ci^T * Tc0_cj = Tci_cj
             Eigen::Matrix<double, 3, 4> P;
-            P.leftCols<3>() = R.transpose();
-            P.rightCols<1>() = -R.transpose() * t;
+            P.leftCols<3>() = R.transpose();//Tci_cj^T = Tcj_ci
+            P.rightCols<1>() = -R.transpose() * t;//Tcj_ci
+            //normalized之后不是归一化坐标了，但是模长为1，f为imu_j帧的观测[u',v',1]^T，标准化为[u,v,w]^T
             Eigen::Vector3d f = it_per_frame.point.normalized();
-            //
+//            ROS_DEBUG_STREAM("before normalized f: " << it_per_frame.point.transpose() <<"   after normalized f: " << f.transpose());
+            //D找那个一个block的两行方程，当观测不为归一化坐标时，下面的构建是更一般的形式
+            //设观测为[u,v,w]^T，则D.block为：
+            //D.row(0) = u * (Tk,3)^T - w * (Tk,1)^T
+            //D.row(1) = v * (Tk,3)^T - w * (Tk,2)^T
             svd_A.row(svd_idx++) = f[0] * P.row(2) - f[2] * P.row(0);
             svd_A.row(svd_idx++) = f[1] * P.row(2) - f[2] * P.row(1);
 
@@ -269,7 +277,7 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
         }
         ROS_ASSERT(svd_idx == svd_A.rows());
         Eigen::Vector4d svd_V = Eigen::JacobiSVD<Eigen::MatrixXd>(svd_A, Eigen::ComputeThinV).matrixV().rightCols<1>();
-        double svd_method = svd_V[2] / svd_V[3];
+        double svd_method = svd_V[2] / svd_V[3];//齐次化
         //it_per_id->estimated_depth = -b / A;
         //it_per_id->estimated_depth = svd_V[2] / svd_V[3];
 
@@ -278,7 +286,7 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
 
         if (it_per_id.estimated_depth < 0.1)
         {
-            it_per_id.estimated_depth = INIT_DEPTH;
+            it_per_id.estimated_depth = INIT_DEPTH;//如果估计的不对，就设为默认的5.0
         }
 
     }
