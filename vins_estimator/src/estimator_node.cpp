@@ -367,7 +367,7 @@ void process()
             double whole_t = t_s.toc();
             printStatistics(estimator, whole_t);
             std_msgs::Header header = img_msg->header;
-            header.frame_id = "world";
+            header.frame_id = "world";//为什么都设为“world”？
 
             pubOdometry(estimator, header);//"odometry"
             pubKeyPoses(estimator, header);//"key_poses"

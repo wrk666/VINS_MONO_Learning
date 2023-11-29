@@ -260,7 +260,7 @@ bool Estimator::initialStructure()
         }
         var = sqrt(var / ((int)all_image_frame.size() - 1));//求线加速度的标准差
         //ROS_WARN("IMU variation %f!", var);
-        if(var < 0.25)//如果加速度方差小于0.25，则证明加速度波动较小，证明IMU激励不够（TODO：这个0.25跟标定qcb旋转外参得手SVD的特征值的那个0.25有关系吗？）
+        if(var < 0.25)//如果加速度方差小于0.25，则证明加速度波动较小，证明IMU激励不够（TODO：这个0.25跟标定qcb旋转外参SVD的特征值的那个0.25有关系吗？）
         {
             ROS_INFO("IMU excitation not enouth!");
             //return false;
@@ -296,6 +296,7 @@ bool Estimator::initialStructure()
         ROS_INFO("Not enough features or parallax; Move device around");
         return false;
     }
+    l_ = l;
 
     //求解SfM问题：对窗口中每个图像帧求解sfm问题，得到所有图像帧相对于参考帧l的旋转四元数Q、平移向量T和特征点坐标sfm_tracked_points。
     GlobalSFM sfm;
@@ -385,6 +386,7 @@ bool Estimator::initialStructure()
         frame_it->second.R = R_pnp * RIC[0].transpose(); // Tc0_ck * Tbc^(-1) = Tc0_bk转到c0系下看bk
         frame_it->second.T = T_pnp;
     }
+    ROS_DEBUG_STREAM("\nhere l_: " << l_ <<  "\nKF[0] Rs[0]:\n" << all_image_frame[Headers[0].stamp.toSec()].R);
     if (visualInitialAlign())//视觉惯性对齐:bg，gc0，s，v的估计
         return true;
     else
@@ -420,7 +422,8 @@ bool Estimator::visualInitialAlign()
         Rs[i] = Ri;
         all_image_frame[Headers[i].stamp.toSec()].is_key_frame = true;
     }
-
+    ROS_DEBUG_STREAM("\nhere l_: " << l_
+                        << "\nKF Rs[0]:\n" << Rs[0]);
     //1.梳理一下：此时all_image_frame[Headers[i].stamp.toSec()].R，T都是Tc0_bk
     //所以Ps,Rs也都是Tc0_bk
 
@@ -448,16 +451,20 @@ bool Estimator::visualInitialAlign()
     }
     ROS_INFO_STREAM("TIC[0]:\n" << TIC[0].transpose());
 
-    //2.这里将Ps转换为tb0_bk
+    //2.这里将Ps转换为(c0)tb0_bk
     for (int i = frame_count; i >= 0; i--) {
         //论文式(6)，看起来Rs应该是Rc0_bk(这个时候c0应该还没变为world，所以应该是在恢复米制单位)
         Ps[i] = s * Ps[i] - Rs[i] * TIC[0] - (s * Ps[0] - Rs[0] * TIC[0]);//这里输入的Ps还是tc0_bk,输出的Ps是(c0)tb0_bk，是在c0系下看的这个translation
-        //TIC[0]为0代表第一项 s * Ps[i] - Rs[i] * TIC[0]=s*Ps[i]，即s*tc0_bk=s*tc0_ck(因为此时Ps=tc0_bk)
-        ROS_INFO_STREAM("TIC[0]:\n" << TIC[0].transpose()
-                        << "\ns * Ps[i] - Rs[i] * TIC[0]:\n" << (s * Ps[i] - Rs[i] * TIC[0]).transpose()
-                        << "\ns * Ps[i]:\n" << (s * Ps[i]).transpose());
+        //TIC[0]为0代表第一项 s * Ps[i] - Rs[i] * TIC[0]=s*Ps[i]，即s*tc0_b[k]=s*tc0_c[k](因为此时Ps=tc0_b[k])
+        ROS_INFO_STREAM("TIC[0]:" << TIC[0].transpose()
+                        << "\ns * Ps[i] - Rs[i] * TIC[0]: " << (s * Ps[i] - Rs[i] * TIC[0]).transpose()
+                        << "\ns * Ps[i]: " << (s * Ps[i]).transpose()
+                        << "\nl_: " << l_
+                        << "\nPs[0]: " << Ps[0].transpose()//看他是否为0，如果不是0则证明我把c0和c[0]弄混了
+                        << "\ns * Ps[0]: " << (s * Ps[0]).transpose());
     }
 
+    //速度，深度处理
     int kv = -1;
     map<double, ImageFrame>::iterator frame_i;
     for (frame_i = all_image_frame.begin(); frame_i != all_image_frame.end(); frame_i++)
@@ -465,7 +472,7 @@ bool Estimator::visualInitialAlign()
         if(frame_i->second.is_key_frame)
         {
             kv++;
-            Vs[kv] = frame_i->second.R * x.segment<3>(kv * 3);//更新bk系下的速度：(bk)vk
+            Vs[kv] = frame_i->second.R * x.segment<3>(kv * 3);//更新bk系下的速度：Rc0_bk * (bk)vk = (c0)vk
         }
     }
     for (auto &it_per_id : f_manager.feature)
@@ -477,19 +484,28 @@ bool Estimator::visualInitialAlign()
     }
 
     //g是world系下的重力向量，Rs[0]是Rc0_b0
-    ROS_INFO_STREAM("\nRs[0] is Rc0_b0:\n" << Rs[0]
+    ROS_DEBUG_STREAM("\nRs[0] is Rc0_b0:\n" << Rs[0]
                         <<"\nRbc^T:\n" << RIC[0].transpose());
     Matrix3d R0 = Utility::g2R(g);//求出gc0->gw(0,0,1)的pitch和roll方向的旋转R0
-    double yaw = Utility::R2ypr(R0 * Rs[0]).x();
+    ROS_DEBUG_STREAM("\nhere1 R0.yaw = \n" << Utility::R2ypr(R0).x());
+    Eigen::Vector3d here1_Rs0_ypr = Utility::R2ypr(Rs[0]);
+    double here1_Rs0_yaw = here1_Rs0_ypr.x();//Rs[0].yaw
+
+    double yaw = Utility::R2ypr(R0 * Rs[0]).x();//和transformed_yaw相等，说明不是运算精度的问题，可能就是旋转之后yaw会受到影响
     R0 = Utility::ypr2R(Eigen::Vector3d{-yaw, 0, 0}) * R0;
-    g = R0 * g;//g旋转到world系：Rwc0*g^(c0)=g^w
+    ROS_DEBUG_STREAM("\nhere2 yaw = :\n" << yaw <<
+                          "\nRs[0].yaw = :\n" << here1_Rs0_yaw <<
+                          "\neventually, R0.yaw = \n" << Utility::R2ypr(R0).x());
+    g = R0 * g;//将估计的重力g旋转到world系：yaw * Rwc0*g^(c0)=g^w，
     //Matrix3d rot_diff = R0 * Rs[0].transpose();
-    Matrix3d rot_diff = R0;
+    Matrix3d rot_diff = R0;//rotdiff最后使得在world系下，b[0]真的yaw为0°
+    //(PRV)w_b[k] = Rw_b[0] * (PRV)c0_b[k]
     for (int i = 0; i <= frame_count; i++)
     {
         Ps[i] = rot_diff * Ps[i];
-        Rs[i] = rot_diff * Rs[i];
-        Vs[i] = rot_diff * Vs[i];//vb0_bk
+        Rs[i] = rot_diff * Rs[i];//(w)vb0_bk
+        Vs[i] = rot_diff * Vs[i];//(w)vb0_bk
+        ROS_DEBUG_STREAM("\ni=" << i <<"    Rs[i].yaw = \n" << Utility::R2ypr(Rs[i]).x());
     }
     ROS_DEBUG_STREAM("g0     " << g.transpose());
     ROS_DEBUG_STREAM("my R0  " << Utility::R2ypr(Rs[0]).transpose()); 
@@ -526,6 +542,8 @@ bool Estimator::relativePose(Matrix3d &relative_R, Vector3d &relative_T, int &l)
             if(average_parallax * 460 > 30 && m_estimator.solveRelativeRT(corres, relative_R, relative_T))
             {
                 l = i;
+//                l = l+2;
+//                ROS_DEBUG("change l to l+2 = %d", l);
                 ROS_DEBUG("average_parallax %f choose l %d and newest frame to triangulate the whole structure", average_parallax * 460, l);
                 return true;
             }

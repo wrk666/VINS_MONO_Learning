@@ -242,11 +242,11 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
         Eigen::MatrixXd svd_A(2 * it_per_id.feature_per_frame.size(), 4);
         int svd_idx = 0;
 
-        //P0设为Identity()的T，但是侯后面没用
+        //P0设为Identity()的T，但是后面没用
         Eigen::Matrix<double, 3, 4> P0;
-        Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0];//Rc0_bk*tbc + tc0_bk即Tc0_bk * Tbc = Tc0_ck = Tc0_ci，从IMU系再转回camera系
+        //这里Tc0_b[i]*Tbc = Tc0_c[i] = [R0|t0]，求出来的深度都是在c0系下，注意c0是WINDOW[l]，而不是WINDOW[0]，不要被下标搞混乱
+        Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0];//Rc0_b[k]*tbc + tc0_bk即Tc0_bk * Tbc = Tc0_ck = Tc0_c[i]，从IMU系再转回camera系
         Eigen::Matrix3d R0 = Rs[imu_i] * ric[0];
-        //这里我猜测应该是想用P0作为c0帧，但是后面也没用P0，而且按照这代码中的逻辑解释，求出的深度都是在所谓的[R0, t0]这个帧下的深度，根本不是在c0帧下的深度
         P0.leftCols<3>() = Eigen::Matrix3d::Identity();
         P0.rightCols<1>() = Eigen::Vector3d::Zero();
         ROS_DEBUG_STREAM("P0:\n" << P0 <<"\nR0:\n" << R0 << "\nt0:\n" << t0.transpose());
