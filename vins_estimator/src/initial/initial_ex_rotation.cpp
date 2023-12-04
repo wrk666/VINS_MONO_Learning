@@ -53,7 +53,7 @@ bool InitialEXRotation::CalibrationExRotation(vector<pair<Vector3d, Vector3d>> c
         //w -z  y  x
         //z  w -x  y
         //-y x  w  z
-        //-z -y -z  w
+        //-x -y -z  w
         double w = Quaterniond(Rc[i]).w();
         Vector3d q = Quaterniond(Rc[i]).vec();
         L.block<3, 3>(0, 0) = w * Matrix3d::Identity() + Utility::skewSymmetric(q);//构建A左上角3*3

@@ -389,7 +389,7 @@ void process()
     }
 }
 
-int main(int argc, char **argv)
+int main(int argc, char **argv)//argc:参数个数，argv：参数值，是char*的数组指针，二重指针，这里只需要传数组名即可
 {
     ros::init(argc, argv, "vins_estimator");
     ros::NodeHandle n("~");

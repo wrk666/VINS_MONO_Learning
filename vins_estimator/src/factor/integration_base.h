@@ -62,14 +62,14 @@ class IntegrationBase
     {
         //ROS_INFO("midpoint integration");
         //见博客3.2节式(34)：https://blog.csdn.net/qq_37746927/article/details/130714626#t11
-        Vector3d un_acc_0 = delta_q * (_acc_0 - linearized_ba);//此时delta_q=qbi_bk
+        Vector3d un_acc_0 = delta_q * (_acc_0 - linearized_ba);//qbi_bk+1 = qbi_bk*(a_bk - b_ak),此时delta_q=qbi_bk
         Vector3d un_gyr = 0.5 * (_gyr_0 + _gyr_1) - linearized_bg;//w=1/2*((wb_k - bgk)+(wb_k+1 - bgk)) = 1/2*(wb_k + wb_k+1) - bgk
         //qbi_bk+1 = qbi_bk x Quaterniond(1, (w * delta_t)/2)
         result_delta_q = delta_q * Quaterniond(1, un_gyr(0) * _dt / 2, un_gyr(1) * _dt / 2, un_gyr(2) * _dt / 2);
-        Vector3d un_acc_1 = result_delta_q * (_acc_1 - linearized_ba);//此时delta_q=qbi_bk+1
-        Vector3d un_acc = 0.5 * (un_acc_0 + un_acc_1);
-        result_delta_p = delta_p + delta_v * _dt + 0.5 * un_acc * _dt * _dt;
-        result_delta_v = delta_v + un_acc * _dt;
+        Vector3d un_acc_1 = result_delta_q * (_acc_1 - linearized_ba);//a的k+1时刻部分：qbi_bk+1*(a_bk - b_ak)，此时delta_q=qbi_bk+1
+        Vector3d un_acc = 0.5 * (un_acc_0 + un_acc_1);//中值积分计算a
+        result_delta_p = delta_p + delta_v * _dt + 0.5 * un_acc * _dt * _dt;//αk+1
+        result_delta_v = delta_v + un_acc * _dt;//βk+1
         result_linearized_ba = linearized_ba;//忽略噪声n，认为k+1时刻的bias和k时刻相等
         result_linearized_bg = linearized_bg;
 
@@ -77,56 +77,98 @@ class IntegrationBase
         if(update_jacobian)
         {
             Vector3d w_x = 0.5 * (_gyr_0 + _gyr_1) - linearized_bg;
-            Vector3d a_0_x = _acc_0 - linearized_ba;
-            Vector3d a_1_x = _acc_1 - linearized_ba;
+            Vector3d a_0_x = _acc_0 - linearized_ba;//abk - bka
+            Vector3d a_1_x = _acc_1 - linearized_ba;//abk+1 - bka
             Matrix3d R_w_x, R_a_0_x, R_a_1_x;
 
+            //[w]x  反对称矩阵
             R_w_x<<0, -w_x(2), w_x(1),
                 w_x(2), 0, -w_x(0),
                 -w_x(1), w_x(0), 0;
+            //[abk - bka]x
             R_a_0_x<<0, -a_0_x(2), a_0_x(1),
                 a_0_x(2), 0, -a_0_x(0),
                 -a_0_x(1), a_0_x(0), 0;
+            //[abk+1 - bka]x
             R_a_1_x<<0, -a_1_x(2), a_1_x(1),
                 a_1_x(2), 0, -a_1_x(0),
                 -a_1_x(1), a_1_x(0), 0;
 
             MatrixXd F = MatrixXd::Zero(15, 15);
+            //f11
             F.block<3, 3>(0, 0) = Matrix3d::Identity();
+            //f12
             F.block<3, 3>(0, 3) = -0.25 * delta_q.toRotationMatrix() * R_a_0_x * _dt * _dt + 
                                   -0.25 * result_delta_q.toRotationMatrix() * R_a_1_x * (Matrix3d::Identity() - R_w_x * _dt) * _dt * _dt;
+            //13
             F.block<3, 3>(0, 6) = MatrixXd::Identity(3,3) * _dt;
+            //f14
             F.block<3, 3>(0, 9) = -0.25 * (delta_q.toRotationMatrix() + result_delta_q.toRotationMatrix()) * _dt * _dt;
+            //f15
             F.block<3, 3>(0, 12) = -0.25 * result_delta_q.toRotationMatrix() * R_a_1_x * _dt * _dt * -_dt;
+            //f21 = 0
+            //f22
             F.block<3, 3>(3, 3) = Matrix3d::Identity() - R_w_x * _dt;
-            F.block<3, 3>(3, 12) = -1.0 * MatrixXd::Identity(3,3) * _dt;//f25，在估计gyro bias时用到了
+            //f23=0  f24=0
+            //f25,在估计gyro bias时用到了
+            F.block<3, 3>(3, 12) = -1.0 * MatrixXd::Identity(3,3) * _dt;
+            //f31=0
+            //f32
             F.block<3, 3>(6, 3) = -0.5 * delta_q.toRotationMatrix() * R_a_0_x * _dt + 
                                   -0.5 * result_delta_q.toRotationMatrix() * R_a_1_x * (Matrix3d::Identity() - R_w_x * _dt) * _dt;
+            //f33
             F.block<3, 3>(6, 6) = Matrix3d::Identity();
+            //f34
             F.block<3, 3>(6, 9) = -0.5 * (delta_q.toRotationMatrix() + result_delta_q.toRotationMatrix()) * _dt;
+            //f35
             F.block<3, 3>(6, 12) = -0.5 * result_delta_q.toRotationMatrix() * R_a_1_x * _dt * -_dt;
+            //f41=f42=f43=0
+            //f44
             F.block<3, 3>(9, 9) = Matrix3d::Identity();
+            //f45=0
+            //f51=f52=f53=f54=0
+            //f55
             F.block<3, 3>(12, 12) = Matrix3d::Identity();
             //cout<<"A"<<endl<<A<<endl;
 
+
             MatrixXd V = MatrixXd::Zero(15,18);
+            //g11
             V.block<3, 3>(0, 0) =  0.25 * delta_q.toRotationMatrix() * _dt * _dt;
+            //g12
             V.block<3, 3>(0, 3) =  0.25 * -result_delta_q.toRotationMatrix() * R_a_1_x  * _dt * _dt * 0.5 * _dt;
+            //g13
             V.block<3, 3>(0, 6) =  0.25 * result_delta_q.toRotationMatrix() * _dt * _dt;
+            //g14=g12
             V.block<3, 3>(0, 9) =  V.block<3, 3>(0, 3);
+            //g15=g16=0
+            //g21=0
+            //g22
             V.block<3, 3>(3, 3) =  0.5 * MatrixXd::Identity(3,3) * _dt;
+            //g23=0
+            //g24
             V.block<3, 3>(3, 9) =  0.5 * MatrixXd::Identity(3,3) * _dt;
+            //g25=g26=0
+            //g31
             V.block<3, 3>(6, 0) =  0.5 * delta_q.toRotationMatrix() * _dt;
+            //g32
             V.block<3, 3>(6, 3) =  0.5 * -result_delta_q.toRotationMatrix() * R_a_1_x  * _dt * 0.5 * _dt;
+            //g33
             V.block<3, 3>(6, 6) =  0.5 * result_delta_q.toRotationMatrix() * _dt;
+            //g34=g32
             V.block<3, 3>(6, 9) =  V.block<3, 3>(6, 3);
+            //g35=g36=0
+            //g41=g42=g43=g44=0
+            //g45
             V.block<3, 3>(9, 12) = MatrixXd::Identity(3,3) * _dt;
+            //g51=g52=g53=g54=g55=0
+            //g56
             V.block<3, 3>(12, 15) = MatrixXd::Identity(3,3) * _dt;
 
             //step_jacobian = F;
             //step_V = V;
             jacobian = F * jacobian;
-            covariance = F * covariance * F.transpose() + V * noise * V.transpose();
+            covariance = F * covariance * F.transpose() + V * noise * V.transpose();//误差的传递由两部分组成：当前时刻的误差传递给下一时刻，当前时刻测量噪声传递给下一时刻。（这个还不是很懂）
         }
 
     }

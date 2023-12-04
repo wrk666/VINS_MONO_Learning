@@ -296,7 +296,7 @@ bool Estimator::initialStructure()
         ROS_INFO("Not enough features or parallax; Move device around");
         return false;
     }
-    l_ = l;
+    l_ = l;//将l赋给成员，便于外面查看l的帧数
 
     //求解SfM问题：对窗口中每个图像帧求解sfm问题，得到所有图像帧相对于参考帧l的旋转四元数Q、平移向量T和特征点坐标sfm_tracked_points。
     GlobalSFM sfm;
