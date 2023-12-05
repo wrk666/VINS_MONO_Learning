@@ -29,7 +29,7 @@ class FeaturePerFrame
         velocity.y() = _point(6); 
         cur_td = td;
     }
-    double cur_td;
+    double cur_td;//每个2Dfeature似乎都有一个对应的td
     Vector3d point;
     Vector2d uv;
     Vector2d velocity;

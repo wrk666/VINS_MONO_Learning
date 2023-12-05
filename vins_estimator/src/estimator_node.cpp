@@ -166,7 +166,7 @@ void imu_callback(const sensor_msgs::ImuConstPtr &imu_msg)
 
     last_imu_t = imu_msg->header.stamp.toSec();
 
-    {
+    {//加括号指定lock_guard的作用域
         std::lock_guard<std::mutex> lg(m_state);//通过lock_guard的方式构造互斥锁，在构造时加锁，析构时解锁
         predict(imu_msg);
         std_msgs::Header header = imu_msg->header;
@@ -310,7 +310,7 @@ void process()
                     //printf("dimu: dt:%f a: %f %f %f w: %f %f %f\n",dt_1, dx, dy, dz, rx, ry, rz);
                 }
             }
-            // 设置重定位用的回环帧
+            // 取relo_buf中最新的帧，设置重定位用的回环帧
             // set relocalization frame
             sensor_msgs::PointCloudConstPtr relo_msg = NULL;
             while (!relo_buf.empty())
@@ -408,7 +408,7 @@ int main(int argc, char **argv)//argc:参数个数，argv：参数值，是char*
     ros::Subscriber sub_image = n.subscribe("/feature_tracker/feature", 2000, feature_callback);
     //订阅/feature_tracker/restart，callbak中清空feature_buf，imu_buf，清除estimator的state和已读取的config paramter
     ros::Subscriber sub_restart = n.subscribe("/feature_tracker/restart", 2000, restart_callback);
-    //订阅/pose_graph/match_points，callback中relo_buf.push(points_msg);
+    //订阅/pose_graph/match_points，callback中relo_buf.push(points_msg);   TODO：relo的数据结构后面需要探究
     ros::Subscriber sub_relo_points = n.subscribe("/pose_graph/match_points", 2000, relocalization_callback);
 
     std::thread measurement_process{process};//创建VIO主线程

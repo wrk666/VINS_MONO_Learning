@@ -106,8 +106,8 @@ class Estimator
     vector<Vector3d> key_poses;
     double initial_timestamp;
 
-
-    double para_Pose[WINDOW_SIZE + 1][SIZE_POSE];
+    //因为ceres用的是double数组，所以在传入之前要用vector2double做类型装换
+    double para_Pose[WINDOW_SIZE + 1][SIZE_POSE];//传给ceres的WINDOW内的所有pose
     double para_SpeedBias[WINDOW_SIZE + 1][SIZE_SPEEDBIAS];
     double para_Feature[NUM_OF_F][SIZE_FEATURE];
     double para_Ex_Pose[NUM_OF_CAM][SIZE_POSE];
@@ -131,7 +131,7 @@ class Estimator
     double relo_frame_index;
     int relo_frame_local_index;
     vector<Vector3d> match_points;
-    double relo_Pose[SIZE_POSE];
+    double relo_Pose[SIZE_POSE];//用于relo的1个pose
     Matrix3d drift_correct_r;
     Vector3d drift_correct_t;
     Vector3d prev_relo_t;

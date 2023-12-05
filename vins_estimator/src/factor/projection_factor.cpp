@@ -171,7 +171,7 @@ void ProjectionFactor::check(double **parameters)
     double dep_j = pts_camera_j.z();
     residual = (pts_camera_j / dep_j).head<2>() - pts_j.head<2>();
 #endif
-    residual = sqrt_info * residual;
+    residual = sqrt_info * residual;//乘上信息矩阵分解之后的一半
 
     puts("num");
     std::cout << residual.transpose() << std::endl;

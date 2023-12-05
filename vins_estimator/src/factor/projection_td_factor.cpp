@@ -3,6 +3,7 @@
 Eigen::Matrix2d ProjectionTdFactor::sqrt_info;
 double ProjectionTdFactor::sum_t;
 
+//构造
 ProjectionTdFactor::ProjectionTdFactor(const Eigen::Vector3d &_pts_i, const Eigen::Vector3d &_pts_j, 
                                        const Eigen::Vector2d &_velocity_i, const Eigen::Vector2d &_velocity_j,
                                        const double _td_i, const double _td_j, const double _row_i, const double _row_j) : 
@@ -15,17 +16,18 @@ ProjectionTdFactor::ProjectionTdFactor(const Eigen::Vector3d &_pts_i, const Eige
     velocity_j.x() = _velocity_j.x();
     velocity_j.y() = _velocity_j.y();
     velocity_j.z() = 0;
-    row_i = _row_i - ROW / 2;
+    row_i = _row_i - ROW / 2;//计算角点图像坐标的纵坐标，用于处理Rolling shutter相机的曝光时间，TODO：为什么这样计算？
     row_j = _row_j - ROW / 2;
 
+//广角相机的球面模型，求正切空间的两个单位正交基
 #ifdef UNIT_SPHERE_ERROR
     Eigen::Vector3d b1, b2;
     Eigen::Vector3d a = pts_j.normalized();
     Eigen::Vector3d tmp(0, 0, 1);
     if(a == tmp)
         tmp << 1, 0, 0;
-    b1 = (tmp - a * (a.transpose() * tmp)).normalized();
-    b2 = a.cross(b1);
+    b1 = (tmp - a * (a.transpose() * tmp)).normalized();//tmp - 投影得到一个基
+    b2 = a.cross(b1);//叉乘得另一个基
     tangent_base.block<1, 3>(0, 0) = b1.transpose();
     tangent_base.block<1, 3>(1, 0) = b2.transpose();
 #endif
@@ -40,18 +42,23 @@ bool ProjectionTdFactor::Evaluate(double const *const *parameters, double *resid
     Eigen::Vector3d Pj(parameters[1][0], parameters[1][1], parameters[1][2]);
     Eigen::Quaterniond Qj(parameters[1][6], parameters[1][3], parameters[1][4], parameters[1][5]);
 
+    //外参
     Eigen::Vector3d tic(parameters[2][0], parameters[2][1], parameters[2][2]);
     Eigen::Quaterniond qic(parameters[2][6], parameters[2][3], parameters[2][4], parameters[2][5]);
 
+    //逆深度(landmark参数化)
     double inv_dep_i = parameters[3][0];
 
+    //time offset
     double td = parameters[4][0];
 
-    // 这里的td_i和td_j和速度i，j分别是如何计算的？是什么意义？速度是我理解的那样的特征点的速度吗？每个track到的特征点单独计算？
-    // TR应该是曝光完一帧img所需的时间，根据行数就得到了这一行开始时的曝光时间，然后计算就看不懂了。
+    //特征匀速模型补偿特征的坐标
+    //pts_i_td 处理时间同步误差和Rolling shutter时间后，角点在归一化平面的坐标。
+    //TR / ROW * row_i就是相机 rolling 到这一行时所用的时间（认为rolling shutter camera同一行像素的曝光时间相同）
     Eigen::Vector3d pts_i_td, pts_j_td;
     pts_i_td = pts_i - (td - td_i + TR / ROW * row_i) * velocity_i;
     pts_j_td = pts_j - (td - td_j + TR / ROW * row_j) * velocity_j;
+    //归一化转为camera系3D
     Eigen::Vector3d pts_camera_i = pts_i_td / inv_dep_i;
     Eigen::Vector3d pts_imu_i = qic * pts_camera_i + tic;
     Eigen::Vector3d pts_w = Qi * pts_imu_i + Pi;
@@ -63,7 +70,7 @@ bool ProjectionTdFactor::Evaluate(double const *const *parameters, double *resid
     residual =  tangent_base * (pts_camera_j.normalized() - pts_j_td.normalized());
 #else
     double dep_j = pts_camera_j.z();
-    residual = (pts_camera_j / dep_j).head<2>() - pts_j_td.head<2>();
+    residual = (pts_camera_j / dep_j).head<2>() - pts_j_td.head<2>();//计算残差
 #endif
 
     residual = sqrt_info * residual;
@@ -86,11 +93,13 @@ bool ProjectionTdFactor::Evaluate(double const *const *parameters, double *resid
                      - x1 * x3 / pow(norm, 3),            - x2 * x3 / pow(norm, 3),            1.0 / norm - x3 * x3 / pow(norm, 3);
         reduce = tangent_base * norm_jaco;
 #else
+        //rc对fcj求导
         reduce << 1. / dep_j, 0, -pts_camera_j(0) / (dep_j * dep_j),
             0, 1. / dep_j, -pts_camera_j(1) / (dep_j * dep_j);
 #endif
         reduce = sqrt_info * reduce;
 
+        //对Pi求导[jacobian_t, jacobian_R, 0](2x7)（residual对四元数求导是2*4，但对旋转矩阵表示就是3*3，对平移求导是2*3，所以是2*6，最后一列2*1置为0）
         if (jacobians[0])
         {
             Eigen::Map<Eigen::Matrix<double, 2, 7, Eigen::RowMajor>> jacobian_pose_i(jacobians[0]);
@@ -103,6 +112,7 @@ bool ProjectionTdFactor::Evaluate(double const *const *parameters, double *resid
             jacobian_pose_i.rightCols<1>().setZero();
         }
 
+        //对Pj求导
         if (jacobians[1])
         {
             Eigen::Map<Eigen::Matrix<double, 2, 7, Eigen::RowMajor>> jacobian_pose_j(jacobians[1]);
@@ -114,6 +124,8 @@ bool ProjectionTdFactor::Evaluate(double const *const *parameters, double *resid
             jacobian_pose_j.leftCols<6>() = reduce * jaco_j;
             jacobian_pose_j.rightCols<1>().setZero();
         }
+
+        //对Tic求导
         if (jacobians[2])
         {
             Eigen::Map<Eigen::Matrix<double, 2, 7, Eigen::RowMajor>> jacobian_ex_pose(jacobians[2]);
@@ -125,16 +137,18 @@ bool ProjectionTdFactor::Evaluate(double const *const *parameters, double *resid
             jacobian_ex_pose.leftCols<6>() = reduce * jaco_ex;
             jacobian_ex_pose.rightCols<1>().setZero();
         }
+        //逆深度求导
         if (jacobians[3])
         {
             Eigen::Map<Eigen::Vector2d> jacobian_feature(jacobians[3]);
             jacobian_feature = reduce * ric.transpose() * Rj.transpose() * Ri * ric * pts_i_td * -1.0 / (inv_dep_i * inv_dep_i);
         }
+        //对time offset求导(2x1)------------------------看到这了
         if (jacobians[4])
         {
             Eigen::Map<Eigen::Vector2d> jacobian_td(jacobians[4]);
             jacobian_td = reduce * ric.transpose() * Rj.transpose() * Ri * ric * velocity_i / inv_dep_i * -1.0  +
-                          sqrt_info * velocity_j.head(2);
+                          sqrt_info * velocity_j.head(2);  //后面的项看不懂，为啥要管第j帧的速度？
         }
     }
     sum_t += tic_toc.toc();
@@ -142,6 +156,9 @@ bool ProjectionTdFactor::Evaluate(double const *const *parameters, double *resid
     return true;
 }
 
+// 一阶微分法求解数值jacobian，用于检查手动Jacobian计推导是否正确，
+// 在一个项上添加一个很小的量eps，然后计算(tmp_residual-residual)/eps即可得数值Jacobian，
+// 与推导的手动Jacobian对比看是否接近，若接近则证明推导正确
 void ProjectionTdFactor::check(double **parameters)
 {
     double *res = new double[2];
@@ -152,7 +169,7 @@ void ProjectionTdFactor::check(double **parameters)
     jaco[3] = new double[2 * 1];
     jaco[4] = new double[2 * 1];
     Evaluate(parameters, res, jaco);
-    puts("check begins");
+    puts("check begins");//打印出来
 
     puts("my");
 
