@@ -39,6 +39,9 @@ void PoseGraph::loadVocabulary(std::string voc_path)
     db.setVocabulary(*voc, false, 0);
 }
 
+//将KF添加到BRIEF描述子数据库中
+//计算当前帧与词袋的相似度分数， 并与关键帧数据库
+//中所有帧进行对比，并进行闭环一致性检测，获得闭环的候选帧（ detectLoop）。
 void PoseGraph::addKeyFrame(KeyFrame* cur_kf, bool flag_detect_loop)
 {
     //shift to base frame

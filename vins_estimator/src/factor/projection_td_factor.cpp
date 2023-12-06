@@ -143,7 +143,7 @@ bool ProjectionTdFactor::Evaluate(double const *const *parameters, double *resid
             Eigen::Map<Eigen::Vector2d> jacobian_feature(jacobians[3]);
             jacobian_feature = reduce * ric.transpose() * Rj.transpose() * Ri * ric * pts_i_td * -1.0 / (inv_dep_i * inv_dep_i);
         }
-        //对time offset求导(2x1)------------------------看到这了
+        //对time offset求导(2x1)  TODO：不知道这里的Jacobian为什么这么求
         if (jacobians[4])
         {
             Eigen::Map<Eigen::Vector2d> jacobian_td(jacobians[4]);
@@ -156,9 +156,13 @@ bool ProjectionTdFactor::Evaluate(double const *const *parameters, double *resid
     return true;
 }
 
-// 一阶微分法求解数值jacobian，用于检查手动Jacobian计推导是否正确，
-// 在一个项上添加一个很小的量eps，然后计算(tmp_residual-residual)/eps即可得数值Jacobian，
-// 与推导的手动Jacobian对比看是否接近，若接近则证明推导正确
+/**
+ * @brief       check手动jacobian是否正确
+ * @Description 1.正常计算residual，2.添加微小扰动eps，重新计算residual。
+ *              3.(tmp_residual-residual)/eps得数值Jacobian，与手动jacobian接近则证明推导正确
+ * @param[in]   parameters 待优化变量
+ * @return      void
+*/
 void ProjectionTdFactor::check(double **parameters)
 {
     double *res = new double[2];
@@ -236,7 +240,7 @@ void ProjectionTdFactor::check(double **parameters)
 
         int a = k / 3, b = k % 3;
         Eigen::Vector3d delta = Eigen::Vector3d(b == 0, b == 1, b == 2) * eps;
-
+        //对待优化变量都施加一个微小的变化量
         if (a == 0)
             Pi += delta;
         else if (a == 1)
@@ -254,6 +258,8 @@ void ProjectionTdFactor::check(double **parameters)
         else if (a == 6 && b == 1)
             td += delta.y();
 
+        //pts_i_td 处理时间同步误差和Rolling shutter时间后，角点在归一化平面的坐标。
+        //TR / ROW * row_i就是相机 rolling 到这一行时所用的时间（认为rolling shutter camera同一行像素的曝光时间相同）
         Eigen::Vector3d pts_i_td, pts_j_td;
         pts_i_td = pts_i - (td - td_i + TR / ROW * row_i) * velocity_i;
         pts_j_td = pts_j - (td - td_j + TR / ROW * row_j) * velocity_j;

@@ -84,6 +84,7 @@ void KeyFrame::computeWindowBRIEFPoint()
 	extractor(image, window_keypoints, window_brief_descriptors);
 }
 
+//对新KF再重新检出500个FAST角点，用于loop closure
 void KeyFrame::computeBRIEFPoint()
 {
 	BriefExtractor extractor(BRIEF_PATTERN_FILE.c_str());

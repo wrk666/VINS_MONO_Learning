@@ -9,6 +9,12 @@
 
 #include <ceres/ceres.h>
 
+/**
+ * @brief       IMU残差部分factor类
+ * @Description 继承ceres::SizedCostFunction，
+ * @param[in]   parameters 待优化变量 [pk,qk]7*1,[vk,bak,bgk]9*1,[pk+1,qk+1]7*1,[vk+1,bak+1,bgk+1]9*1
+ * @return      void
+*/
 class IMUFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9>
 {
   public:
@@ -56,27 +62,36 @@ class IMUFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9>
             pre_integration->repropagate(Bai, Bgi);
         }
 #endif
-
+        // 构建IMU残差residual
         Eigen::Map<Eigen::Matrix<double, 15, 1>> residual(residuals);
-        //但是看下标感觉不像是观测误差啊，是不同时刻的预积分在计算什么？
         residual = pre_integration->evaluate(Pi, Qi, Vi, Bai, Bgi,
                                             Pj, Qj, Vj, Baj, Bgj);
 
+        // LLT分解，residual 还需乘以信息矩阵的sqrt_info
+        // 因为优化函数其实是d=r^T P^-1 r ，P表示协方差，而ceres只接受最小二乘优化
+        // 因此需要把P^-1做LLT分解，使d=(L^T r)^T (L^T r) = r'^T r
         Eigen::Matrix<double, 15, 15> sqrt_info = Eigen::LLT<Eigen::Matrix<double, 15, 15>>(pre_integration->covariance.inverse()).matrixL().transpose();
         //sqrt_info.setIdentity();
         residual = sqrt_info * residual;
 
         if (jacobians)
         {
-            double sum_dt = pre_integration->sum_dt;
+            double sum_dt = pre_integration->sum_dt;//i->j时刻总共的预积分时间
+            //对于预积分量直接在 i 时刻的 bias 附近用一阶泰勒展开来近似，不用迭代计算
+            //f14
             Eigen::Matrix3d dp_dba = pre_integration->jacobian.template block<3, 3>(O_P, O_BA);
+            //f15
             Eigen::Matrix3d dp_dbg = pre_integration->jacobian.template block<3, 3>(O_P, O_BG);
 
+            //f25
             Eigen::Matrix3d dq_dbg = pre_integration->jacobian.template block<3, 3>(O_R, O_BG);
 
+            //f34
             Eigen::Matrix3d dv_dba = pre_integration->jacobian.template block<3, 3>(O_V, O_BA);
+            //f35
             Eigen::Matrix3d dv_dbg = pre_integration->jacobian.template block<3, 3>(O_V, O_BG);
 
+            //预积分过大
             if (pre_integration->jacobian.maxCoeff() > 1e8 || pre_integration->jacobian.minCoeff() < -1e8)
             {
                 ROS_WARN("numerical unstable in preintegration");
@@ -95,6 +110,7 @@ class IMUFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9>
 #if 0
             jacobian_pose_i.block<3, 3>(O_R, O_R) = -(Qj.inverse() * Qi).toRotationMatrix();
 #else
+                //使用短时gyro的数据对预积分q进行补偿，对应论文IV.A节，但是这里gyro的积分确实参与了优化，并不像论文中说的那样只参与FK selection
                 Eigen::Quaterniond corrected_delta_q = pre_integration->delta_q * Utility::deltaQ(dq_dbg * (Bgi - pre_integration->linearized_bg));
                 jacobian_pose_i.block<3, 3>(O_R, O_R) = -(Utility::Qleft(Qj.inverse() * Qi) * Utility::Qright(corrected_delta_q)).bottomRightCorner<3, 3>();
 #endif
@@ -115,20 +131,21 @@ class IMUFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9>
                 Eigen::Map<Eigen::Matrix<double, 15, 9, Eigen::RowMajor>> jacobian_speedbias_i(jacobians[1]);
                 jacobian_speedbias_i.setZero();
                 jacobian_speedbias_i.block<3, 3>(O_P, O_V - O_V) = -Qi.inverse().toRotationMatrix() * sum_dt;
-                jacobian_speedbias_i.block<3, 3>(O_P, O_BA - O_V) = -dp_dba;
-                jacobian_speedbias_i.block<3, 3>(O_P, O_BG - O_V) = -dp_dbg;
+                jacobian_speedbias_i.block<3, 3>(O_P, O_BA - O_V) = -dp_dba;//-f14
+                jacobian_speedbias_i.block<3, 3>(O_P, O_BG - O_V) = -dp_dbg;//-f15
 
 #if 0
             jacobian_speedbias_i.block<3, 3>(O_R, O_BG - O_V) = -dq_dbg;
 #else
+                //TODO：这里为什么不对pre_integration->delta_q进行补偿？
                 //Eigen::Quaterniond corrected_delta_q = pre_integration->delta_q * Utility::deltaQ(dq_dbg * (Bgi - pre_integration->linearized_bg));
                 //jacobian_speedbias_i.block<3, 3>(O_R, O_BG - O_V) = -Utility::Qleft(Qj.inverse() * Qi * corrected_delta_q).bottomRightCorner<3, 3>() * dq_dbg;
                 jacobian_speedbias_i.block<3, 3>(O_R, O_BG - O_V) = -Utility::Qleft(Qj.inverse() * Qi * pre_integration->delta_q).bottomRightCorner<3, 3>() * dq_dbg;
 #endif
 
                 jacobian_speedbias_i.block<3, 3>(O_V, O_V - O_V) = -Qi.inverse().toRotationMatrix();
-                jacobian_speedbias_i.block<3, 3>(O_V, O_BA - O_V) = -dv_dba;
-                jacobian_speedbias_i.block<3, 3>(O_V, O_BG - O_V) = -dv_dbg;
+                jacobian_speedbias_i.block<3, 3>(O_V, O_BA - O_V) = -dv_dba;//-f34
+                jacobian_speedbias_i.block<3, 3>(O_V, O_BG - O_V) = -dv_dbg;//-f35
 
                 jacobian_speedbias_i.block<3, 3>(O_BA, O_BA - O_V) = -Eigen::Matrix3d::Identity();
 
@@ -149,6 +166,7 @@ class IMUFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9>
 #if 0
             jacobian_pose_j.block<3, 3>(O_R, O_R) = Eigen::Matrix3d::Identity();
 #else
+                //TODO：这里又进行补偿，不理解
                 Eigen::Quaterniond corrected_delta_q = pre_integration->delta_q * Utility::deltaQ(dq_dbg * (Bgi - pre_integration->linearized_bg));
                 jacobian_pose_j.block<3, 3>(O_R, O_R) = Utility::Qleft(corrected_delta_q.inverse() * Qi.inverse() * Qj).bottomRightCorner<3, 3>();
 #endif

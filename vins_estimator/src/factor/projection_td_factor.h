@@ -7,7 +7,12 @@
 #include "../utility/tic_toc.h"
 #include "../parameters.h"
 
-//这是ceres的写法，构建factor
+/**
+ * @brief       visual残差部分factor类
+ * @Description 继承ceres::SizedCostFunction，
+ * @param[in]   parameters 待优化变量 [pk,qk]7*1,[pk+1,qk+1]7*1,[pbc,qbc]7*1，[λ]1*1，[td]1*1
+ * @return      void
+*/
 class ProjectionTdFactor : public ceres::SizedCostFunction<2, 7, 7, 7, 1, 1>
 {
   public:

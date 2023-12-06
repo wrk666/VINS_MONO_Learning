@@ -15,7 +15,7 @@ void Estimator::setParameter()
         ric[i] = RIC[i];
     }
     f_manager.setRic(ric);
-    //这里为什么取
+    //这里假设标定相机内参时的重投影误差△u=1.5 pixel，(Sigma)^(-1)=(1.5/f * I(2x2))^(-1) = (f/1.5 * I(2x2))
     ProjectionFactor::sqrt_info = FOCAL_LENGTH / 1.5 * Matrix2d::Identity();
     ProjectionTdFactor::sqrt_info = FOCAL_LENGTH / 1.5 * Matrix2d::Identity();
     td = TD;
@@ -574,6 +574,8 @@ void Estimator::solveOdometry()
     }
 }
 
+//vector转换成double数组，因为ceres使用数值数组
+//Ps、Rs转变成para_Pose，Vs、Bas、Bgs转变成para_SpeedBias
 void Estimator::vector2double()
 {
     for (int i = 0; i <= WINDOW_SIZE; i++)
@@ -618,10 +620,13 @@ void Estimator::vector2double()
         para_Td[0][0] = td;
 }
 
-//这个就是优化一次之后，求出优化前后的第一帧的T，用于后面作用到所有的轨迹上去
+// 优化一次之后，求出优化前后的第一帧的T，用于后面作用到所有的轨迹上去
+// 数据转换，vector2double的相反过程
+// 同时这里为防止优化结果往零空间变化，会根据优化前后第一帧的位姿差进行修正。
 void Estimator::double2vector()
 {
-    Vector3d origin_R0 = Utility::R2ypr(Rs[0]);
+    //窗口第一帧优化前的位姿
+    Vector3d origin_R0 = Utility::R2ypr(Rs[0]);//R[0]
     Vector3d origin_P0 = Ps[0];
 
     if (failure_occur)
@@ -630,12 +635,13 @@ void Estimator::double2vector()
         origin_P0 = last_P0;
         failure_occur = 0;
     }
+    //窗口第一帧优化后的位姿 q(wxyz)
     Vector3d origin_R00 = Utility::R2ypr(Quaterniond(para_Pose[0][6],
                                                       para_Pose[0][3],
                                                       para_Pose[0][4],
                                                       para_Pose[0][5]).toRotationMatrix());
-    double y_diff = origin_R0.x() - origin_R00.x();
-    //TODO
+    double y_diff = origin_R0.x() - origin_R00.x();//(R_before_after).yaw（指向被减，变换到before）
+    //TODO：了解欧拉角奇异点
     Matrix3d rot_diff = Utility::ypr2R(Vector3d(y_diff, 0, 0));
     if (abs(abs(origin_R0.y()) - 90) < 1.0 || abs(abs(origin_R00.y()) - 90) < 1.0)
     {
@@ -645,7 +651,7 @@ void Estimator::double2vector()
                                        para_Pose[0][4],
                                        para_Pose[0][5]).toRotationMatrix().transpose();
     }
-
+    // 根据位姿差做修正，即保证第一帧优化前后位姿不变(似乎只是yaw不变，那tilt呢？)
     for (int i = 0; i <= WINDOW_SIZE; i++)
     {
 
@@ -668,6 +674,7 @@ void Estimator::double2vector()
                           para_SpeedBias[i][8]);
     }
 
+    //外参
     for (int i = 0; i < NUM_OF_CAM; i++)
     {
         tic[i] = Vector3d(para_Ex_Pose[i][0],
@@ -679,10 +686,12 @@ void Estimator::double2vector()
                              para_Ex_Pose[i][5]).toRotationMatrix();
     }
 
+    //转为逆深度，并置flag
     VectorXd dep = f_manager.getDepthVector();
     for (int i = 0; i < f_manager.getFeatureCount(); i++)
         dep(i) = para_Feature[i][0];
     f_manager.setDepth(dep);
+    //time offset
     if (ESTIMATE_TD)
         td = para_Td[0][0];
 
@@ -694,13 +703,22 @@ void Estimator::double2vector()
         relo_r = rot_diff * Quaterniond(relo_Pose[6], relo_Pose[3], relo_Pose[4], relo_Pose[5]).normalized().toRotationMatrix();
         relo_t = rot_diff * Vector3d(relo_Pose[0] - para_Pose[0][0],
                                      relo_Pose[1] - para_Pose[0][1],
-                                     relo_Pose[2] - para_Pose[0][2]) + origin_P0;
+                                     relo_Pose[2] - para_Pose[0][2]) + origin_P0;//保证第[0]针不变之后，+origin_P0转为世界系下的t
+        //优化前后loop closure frame v 的drift T_prev_now
         double drift_correct_yaw;
+        //loop closure frame优化前后的yaw drift, prev-now = (R_prev_now).yaw
         drift_correct_yaw = Utility::R2ypr(prev_relo_r).x() - Utility::R2ypr(relo_r).x();
+        //r变化R_prev_now
         drift_correct_r = Utility::ypr2R(Vector3d(drift_correct_yaw, 0, 0));
-        drift_correct_t = prev_relo_t - drift_correct_r * relo_t;   
+        //t变化t_now_prev = w_t_prev - Rprev_now * w_t_now
+        drift_correct_t = prev_relo_t - drift_correct_r * relo_t;
+
+        //loop closure frame v与relo frame local(窗口内的local loop帧)的relative pose：T_local_v，可能用于快速重定位
+        //Rw_local^(-1)*( (w)tw_v - (w)t_w_local ) = R_local_w * (w)t_local_v = (local)t_local_v（表示Tlocal_v的平移部分，指向是从local指向v）
         relo_relative_t = relo_r.transpose() * (Ps[relo_frame_local_index] - relo_t);
+        //Rw_local^(-1)*Rw_v = Rlocal_v
         relo_relative_q = relo_r.transpose() * Rs[relo_frame_local_index];
+        //TODO：(R_local_v).yaw
         relo_relative_yaw = Utility::normalizeAngle(Utility::R2ypr(Rs[relo_frame_local_index]).x() - Utility::R2ypr(relo_r).x());
         //cout << "vins relo " << endl;
         //cout << "vins relative_t " << relo_relative_t.transpose() << endl;
@@ -825,10 +843,10 @@ void Estimator::optimization()
         IMUFactor* imu_factor = new IMUFactor(pre_integrations[j]);//这里的factor就是残差residual，ceres里面叫factor
         problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j]);
     }
+
+    //3.添加视觉残差
     int f_m_cnt = 0;
     int feature_index = -1;
-
-    //3.添加视觉残差 从这里看起-----------------------------------------------------------
     for (auto &it_per_id : f_manager.feature)
     {
         it_per_id.used_num = it_per_id.feature_per_frame.size();
@@ -842,6 +860,7 @@ void Estimator::optimization()
         
         Vector3d pts_i = it_per_id.feature_per_frame[0].point;
 
+        //这个id的feature的第一帧和后面所有的帧分别构建residual block
         for (auto &it_per_frame : it_per_id.feature_per_frame)
         {
             imu_j++;
@@ -880,7 +899,8 @@ void Estimator::optimization()
     ROS_DEBUG("visual measurement count: %d", f_m_cnt);
     ROS_DEBUG("prepare for ceres: %f", t_prepare.toc());
 
-    //4.添加闭环检测残差，计算滑动窗口中与每一个闭环关键帧的相对位姿，这个相对位置是为后面的图优化(pose graph)准备
+    //4.添加闭环检测残差，计算滑动窗口中与每一个闭环关键帧的相对位姿，这个相对位置是为后面的图优化(pose graph)准备 或者是 快速重定位(崔华坤PDF7.2节)
+    //这里并未固定loop closure frame的pose，只是把loop上的帧加到
     if(relocalization_info)
     {
         //printf("set relocalization factor! \n");
@@ -895,9 +915,9 @@ void Estimator::optimization()
                 continue;
             ++feature_index;
             int start = it_per_id.start_frame;
-            if(start <= relo_frame_local_index)
+            if(start <= relo_frame_local_index)//必须之前看到过
             {   
-                while((int)match_points[retrive_feature_index].z() < it_per_id.feature_id)
+                while((int)match_points[retrive_feature_index].z() < it_per_id.feature_id)//TODO：这是feature retrival的操作吗？z存的应该是描述子
                 {
                     retrive_feature_index++;
                 }
@@ -907,6 +927,7 @@ void Estimator::optimization()
                     Vector3d pts_i = it_per_id.feature_per_frame[0].point;
                     
                     ProjectionFactor *f = new ProjectionFactor(pts_i, pts_j);
+                    //relo_Pose即loop closure frame v，优化此pose提供更精确的loop位姿，用于计算Tv_(LoopframeinWindow)，这个T下标我是猜的，也可能反过来，但是逻辑是这样
                     problem.AddResidualBlock(f, loss_function, para_Pose[start], relo_Pose, para_Ex_Pose[0], para_Feature[feature_index]);
                     retrive_feature_index++;
                 }     
@@ -935,10 +956,10 @@ void Estimator::optimization()
     ROS_DEBUG("Iterations : %d", static_cast<int>(summary.iterations.size()));
     ROS_DEBUG("solver costs: %f", t_solver.toc());
 
-    // 防止优化结果在零空间变化，通过固定第一帧的位姿
+    // 防止优化结果在零空间变化，通过固定第一帧的位姿(如何固定，free，gauge，fix？)
     double2vector();
 
-    //边缘化处理
+    //边缘化处理   这里---------------------------------------
     //如果次新帧是关键帧，将边缘化最老帧，及其看到的路标点和IMU数据，将其转化为先验：
     TicToc t_whole_marginalization;//如marg掉xi_2，则需要处理跟xi_2相关的先验信息，IMU信息，视觉信息
     if (marginalization_flag == MARGIN_OLD)

@@ -43,9 +43,9 @@ void readParameters(ros::NodeHandle &n);
 
 enum SIZE_PARAMETERIZATION
 {
-    SIZE_POSE = 7,
-    SIZE_SPEEDBIAS = 9,
-    SIZE_FEATURE = 1
+    SIZE_POSE = 7,      //存放方式：p(x,y,z),q(x,y,z,w)
+    SIZE_SPEEDBIAS = 9, //v,ba,bg
+    SIZE_FEATURE = 1    //λ
 };
 //预积分变量的Jacobian的维度总共15维
 enum StateOrder
