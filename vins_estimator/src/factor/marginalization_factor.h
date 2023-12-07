@@ -21,12 +21,12 @@ struct ResidualBlockInfo
 
     ceres::CostFunction *cost_function;
     ceres::LossFunction *loss_function;
-    std::vector<double *> parameter_blocks;
-    std::vector<int> drop_set;
+    std::vector<double *> parameter_blocks;//优化变量数据，sizes每个优化变量块的变量大小，以IMU残差为例，为[7,9,7,9]
+    std::vector<int> drop_set;//待边缘化的优化变量id
 
-    double **raw_jacobians;
-    std::vector<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> jacobians;
-    Eigen::VectorXd residuals;
+    double **raw_jacobians;//二重指针,是为了配合ceres的形参 double** jacobians
+    std::vector<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> jacobians;//这个数据结构看不懂，
+    Eigen::VectorXd residuals;//残差 IMU:15X1 视觉:2X1
 
     int localSize(int size)
     {
@@ -46,20 +46,22 @@ struct ThreadsStruct
 class MarginalizationInfo
 {
   public:
+    //未显式定义构造函数，使用到该类时，编译器才会生成默认构造函数
     ~MarginalizationInfo();
     int localSize(int size) const;
     int globalSize(int size) const;
-    void addResidualBlockInfo(ResidualBlockInfo *residual_block_info);
-    void preMarginalize();
-    void marginalize();
+    void addResidualBlockInfo(ResidualBlockInfo *residual_block_info);//加残差块相关信息(优化变量、待marg的变量)
+    void preMarginalize();//计算每个残差对应的Jacobian，并更新parameter_block_data
+    void marginalize();//pos为所有变量维度，m为需要marg掉的变量，n为需要保留的变量
     std::vector<double *> getParameterBlocks(std::unordered_map<long, double *> &addr_shift);
 
-    std::vector<ResidualBlockInfo *> factors;
-    int m, n;
-    std::unordered_map<long, int> parameter_block_size; //global size
+    std::vector<ResidualBlockInfo *> factors;//所有观测项
+    int m, n;//m为要边缘化的变量个数(也就是parameter_block_idx的总localSize，以double为单位，VBias为9，PQ为6，)，n为要保留下来的变量个数
+    //parameter_block_size 和 parameter_block_data分别对应block的大小和实际数据
+    std::unordered_map<long, int> parameter_block_size; //global size <优化变量内存地址,localSize>
     int sum_block_size;
-    std::unordered_map<long, int> parameter_block_idx; //local size
-    std::unordered_map<long, double *> parameter_block_data;
+    std::unordered_map<long, int> parameter_block_idx; //local size <待边缘化的优化变量内存地址,在parameter_block_size中的id>
+    std::unordered_map<long, double *> parameter_block_data;//<优化变量内存地址,数据>
 
     std::vector<int> keep_block_size; //global size
     std::vector<int> keep_block_idx;  //local size

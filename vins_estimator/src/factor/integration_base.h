@@ -167,7 +167,9 @@ class IntegrationBase
 
             //step_jacobian = F;
             //step_V = V;
+            //jacobian传递
             jacobian = F * jacobian;
+            //协方差传递
             covariance = F * covariance * F.transpose() + V * noise * V.transpose();//误差的传递由两部分组成：当前时刻的误差传递给下一时刻，当前时刻测量噪声传递给下一时刻。（这个还不是很懂）
         }
 

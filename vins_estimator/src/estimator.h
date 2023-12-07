@@ -117,8 +117,8 @@ class Estimator
 
     int loop_window_index;
 
-    MarginalizationInfo *last_marginalization_info;
-    vector<double *> last_marginalization_parameter_blocks;
+    MarginalizationInfo *last_marginalization_info;//编译器自动生成默认构造函数
+    vector<double *> last_marginalization_parameter_blocks;//上次marg后的待优化参数块，是一个double数组的vector，依靠idx来访问
 
     // 存储所有的ImageFrame对象（每读取一帧图像就会构建ImageFrame对象）
     //时间戳map映射ImgFrame，ImageFrame是里面有该帧pose，有该帧预积分,有所有feature_id->features的mapfeatures是pair<camera_id, Mat<7,1>>

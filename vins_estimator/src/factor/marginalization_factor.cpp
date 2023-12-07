@@ -1,17 +1,18 @@
 #include "marginalization_factor.h"
 
+//计算每个残差，对应的Jacobian，并更新 parameter_block_data
 void ResidualBlockInfo::Evaluate()
 {
-    residuals.resize(cost_function->num_residuals());
+    residuals.resize(cost_function->num_residuals());//residual维度
 
     std::vector<int> block_sizes = cost_function->parameter_block_sizes();
-    raw_jacobians = new double *[block_sizes.size()];
+    raw_jacobians = new double *[block_sizes.size()];//二重指针，指针数组
     jacobians.resize(block_sizes.size());
 
     for (int i = 0; i < static_cast<int>(block_sizes.size()); i++)
     {
         jacobians[i].resize(cost_function->num_residuals(), block_sizes[i]);
-        raw_jacobians[i] = jacobians[i].data();
+        raw_jacobians[i] = jacobians[i].data();//二重指针,是为了配合ceres的形参 double** jacobians，看不懂，给data还能够操作地址？？
         //dim += block_sizes[i] == 7 ? 6 : block_sizes[i];
     }
     cost_function->Evaluate(parameter_blocks.data(), residuals.data(), raw_jacobians);
@@ -90,30 +91,31 @@ void MarginalizationInfo::addResidualBlockInfo(ResidualBlockInfo *residual_block
 {
     factors.emplace_back(residual_block_info);
 
-    std::vector<double *> &parameter_blocks = residual_block_info->parameter_blocks;
-    std::vector<int> parameter_block_sizes = residual_block_info->cost_function->parameter_block_sizes();
+    std::vector<double *> &parameter_blocks = residual_block_info->parameter_blocks;//上次优化变量的数据（应该是remain）
+    std::vector<int> parameter_block_sizes = residual_block_info->cost_function->parameter_block_sizes();//输入维度
 
+    //根据addr设置上次remain参数block的size
     for (int i = 0; i < static_cast<int>(residual_block_info->parameter_blocks.size()); i++)
     {
         double *addr = parameter_blocks[i];
         int size = parameter_block_sizes[i];
-        parameter_block_size[reinterpret_cast<long>(addr)] = size;
+        parameter_block_size[reinterpret_cast<long>(addr)] = size;//global size <优化变量内存地址,localSize>
     }
 
+    //需要 marg 掉的变量
     for (int i = 0; i < static_cast<int>(residual_block_info->drop_set.size()); i++)
     {
         double *addr = parameter_blocks[residual_block_info->drop_set[i]];
-        parameter_block_idx[reinterpret_cast<long>(addr)] = 0;
+        parameter_block_idx[reinterpret_cast<long>(addr)] = 0;//TODO设为0就是覆盖了之前的0？？这个怎么用？看不懂
     }
 }
 
-//mar的准备工作，看H对应的地方应该放什么
+
 void MarginalizationInfo::preMarginalize()
 {
     for (auto it : factors)
     {
-        it->Evaluate();
-
+        it->Evaluate();/////////////////////////////////////////////////////////////看到这了
         std::vector<int> block_sizes = it->cost_function->parameter_block_sizes();
         for (int i = 0; i < static_cast<int>(block_sizes.size()); i++)
         {
@@ -172,7 +174,7 @@ void* ThreadsConstructA(void* threadsstruct)
     return threadsstruct;
 }
 
-//不好的地方，这里是camera和landmark一起marg的，会导致求逆比较慢
+//不好的地方，这里是camera和landmark一起marg的，会导致求逆比较慢(这说的是啥？)
 void MarginalizationInfo::marginalize()
 {
     int pos = 0;
@@ -282,6 +284,7 @@ void MarginalizationInfo::marginalize()
     Eigen::MatrixXd Arm = A.block(m, 0, n, m);
     Eigen::MatrixXd Arr = A.block(m, m, n, n);
     Eigen::VectorXd brr = b.segment(m, n);
+    //Shur compliment marginalization，求取边际概率
     A = Arr - Arm * Amm_inv * Amr;
     b = brr - Arm * Amm_inv * bmm;
 
@@ -327,16 +330,18 @@ std::vector<double *> MarginalizationInfo::getParameterBlocks(std::unordered_map
 
 MarginalizationFactor::MarginalizationFactor(MarginalizationInfo* _marginalization_info):marginalization_info(_marginalization_info)
 {
+    //把marginalization_info中的
     int cnt = 0;
     for (auto it : marginalization_info->keep_block_size)
     {
-        mutable_parameter_block_sizes()->push_back(it);
+        mutable_parameter_block_sizes()->push_back(it);//设置输入维度(参数块维度) parameter_block_sizes_
         cnt += it;
     }
     //printf("residual size: %d, %d\n", cnt, n);
-    set_num_residuals(marginalization_info->n);
+    set_num_residuals(marginalization_info->n);//设置输出维度，上一个先验中的remain的size(我猜除了landmark，减掉marg掉的pi,qi,vi共减去15)
 };
 
+//这是marg的factor，求Jacobian
 bool MarginalizationFactor::Evaluate(double const *const *parameters, double *residuals, double **jacobians) const
 {
     //printf("internal addr,%d, %d\n", (int)parameter_block_sizes().size(), num_residuals());

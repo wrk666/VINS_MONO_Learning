@@ -138,6 +138,7 @@ void pubOdometry(const Estimator &estimator, const std_msgs::Header &header)
         Vector3d correct_t;
         Vector3d correct_v;
         Quaterniond correct_q;
+        //Tdrift_correct_r = T_prev_now现在比之前的drift相对量，拉回去
         correct_t = estimator.drift_correct_r * estimator.Ps[WINDOW_SIZE] + estimator.drift_correct_t;
         correct_q = estimator.drift_correct_r * estimator.Rs[WINDOW_SIZE];
         odometry.pose.pose.position.x = correct_t.x();

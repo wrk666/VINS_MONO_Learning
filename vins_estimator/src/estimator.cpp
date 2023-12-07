@@ -97,7 +97,7 @@ void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const
     {
         pre_integrations[frame_count] = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]};
     }
-    if (frame_count != 0)//
+    if (frame_count != 0)//第0帧[0]没有预积分，第[0]与第[1]帧之间才有预积分
     {
         pre_integrations[frame_count]->push_back(dt, linear_acceleration, angular_velocity);//调用IntegrationBase中定义的成员函数push_back，保存变量并propagate预积分
         //if(solver_flag != NON_LINEAR)
@@ -107,7 +107,7 @@ void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const
         linear_acceleration_buf[frame_count].push_back(linear_acceleration);
         angular_velocity_buf[frame_count].push_back(angular_velocity);
 
-        //IMU预积分(为什么这里要重新再算一遍？push_back里面不是重新算过了吗？为什么不直接把delta_p灯结果拿出直接用？)
+        //IMU预积分(为什么这里要重新再算一遍？push_back里面不是重新算过了吗？为什么不直接把delta_p等结果拿出直接用？)
         // 用IMU数据进行积分，当积完一个measurement中所有IMU数据后，就得到了对应图像帧在世界坐标系中的Ps、Vs、Rs（这里为什么是相对于世界坐标系呢？为什么不把关于world系的抽出来呢？）
         // 下面这一部分的积分，在没有成功完成初始化时似乎是没有意义的，因为在没有成功初始化时，对IMU数据来说是没有世界坐标系的
         // 当成功完成了初始化后，下面这一部分积分才有用，它可以通过IMU积分得到滑动窗口中最新帧在世界坐标系中的P V R
@@ -824,11 +824,11 @@ void Estimator::optimization()
     TicToc t_whole, t_prepare;
     vector2double();
 
-    //1.添加边缘化残差（先验部分）
+    //1.添加边缘化残差（先验部分）TODO:看
     if (last_marginalization_info)
     {
         // construct new marginlization_factor
-        MarginalizationFactor *marginalization_factor = new MarginalizationFactor(last_marginalization_info);
+        MarginalizationFactor *marginalization_factor = new MarginalizationFactor(last_marginalization_info);//里面设置了上次先验的什么size，现在还不懂
         problem.AddResidualBlock(marginalization_factor, NULL,
                                  last_marginalization_parameter_blocks);
     }
@@ -940,7 +940,8 @@ void Estimator::optimization()
 
     options.linear_solver_type = ceres::DENSE_SCHUR;
     //options.num_threads = 2;
-    options.trust_region_strategy_type = ceres::DOGLEG;//狗腿算法，和LM算法较为接近，一脉相承
+    options.trust_region_strategy_type = ceres::DOGLEG;//狗腿算法，与LM较为接近
+//    options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;//LM
     options.max_num_iterations = NUM_ITERATIONS;
     //options.use_explicit_schur_complement = true;
     //options.minimizer_progress_to_stdout = true;
@@ -959,17 +960,22 @@ void Estimator::optimization()
     // 防止优化结果在零空间变化，通过固定第一帧的位姿(如何固定，free，gauge，fix？)
     double2vector();
 
-    //边缘化处理   这里---------------------------------------
+    //边缘化处理
     //如果次新帧是关键帧，将边缘化最老帧，及其看到的路标点和IMU数据，将其转化为先验：
     TicToc t_whole_marginalization;//如marg掉xi_2，则需要处理跟xi_2相关的先验信息，IMU信息，视觉信息
+    //1. marg 最老帧[0]
     if (marginalization_flag == MARGIN_OLD)
     {
+        //new_marg_info，编译器生成默认构造函数
         MarginalizationInfo *marginalization_info = new MarginalizationInfo();
         vector2double();
-
+        //1） 把上一次先验项中的残差项（尺寸为 n） 传递给当前先验项，并从中取出需要丢弃的状态量；
+        // (这一步不是多此一举？第2步中的parameter_block不会保证marg掉para_Pose[0]和para_SpeedBias[0]吗？)
+        //并不是，因为里面要求Jacobian，所以必须按照标准的格式传入才能求出正确的Jacobian
         if (last_marginalization_info)//如果不是第一帧（因为第一帧没有marg掉之后生成的先验matrix）
         {
-            vector<int> drop_set;
+            //选出来old帧的数据的idx（准备marg掉）
+            vector<int> drop_set;//本次被marg的参数的idx
             for (int i = 0; i < static_cast<int>(last_marginalization_parameter_blocks.size()); i++)
             {
                 if (last_marginalization_parameter_blocks[i] == para_Pose[0] ||
@@ -977,7 +983,10 @@ void Estimator::optimization()
                     drop_set.push_back(i);
             }
             // construct new marginlization_factor
+            // 用上次marg的info初始化这次的marg_factor，再加到这次的info中，info管理marg的操作，
+            // ceres只管调用marg_factor，不管直接管info（当然factor需要info来初始化，所以是marg_factor管info，而不是ceres）
             MarginalizationFactor *marginalization_factor = new MarginalizationFactor(last_marginalization_info);
+
             ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(marginalization_factor, NULL,
                                                                            last_marginalization_parameter_blocks,
                                                                            drop_set);
@@ -985,17 +994,20 @@ void Estimator::optimization()
             marginalization_info->addResidualBlockInfo(residual_block_info);
         }
 
-        {   //与IMU相关的需要累加
-            if (pre_integrations[1]->sum_dt < 10.0)
+        //2） 将滑窗内第 0 帧和第 1 帧间的 IMU 预积分因子（ pre_integrations[1]）放到marginalization_info 中
+        // （不理解为什么para_Pose[1], para_SpeedBias[1]也要marg）
+        {
+            if (pre_integrations[1]->sum_dt < 10.0)//两帧间时间间隔少于10s，过长时间间隔的不进行marg
             {
                 IMUFactor* imu_factor = new IMUFactor(pre_integrations[1]);
                 ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(imu_factor, NULL,
                                                                            vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1]},
-                                                                           vector<int>{0, 1});
+                                                                           vector<int>{0, 1});//drop_set表示只drop掉[0][1]，即P0,V0（这玩意儿为什么不直接只传被drop掉的，还传其他的干嘛？）
                 marginalization_info->addResidualBlockInfo(residual_block_info);
             }
         }
 
+        //3） 挑 选 出 第 一 次 观 测 帧 为 第 0 帧 的 路 标 点 ， 将 对 应 的 多 组 视 觉 观 测 放 到marginalization_info 中，
         {
             int feature_index = -1;
             for (auto &it_per_id : f_manager.feature)
@@ -1007,10 +1019,10 @@ void Estimator::optimization()
                 ++feature_index;
 
                 int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
-                if (imu_i != 0)
+                if (imu_i != 0)//只选择从[0]开始tracking的点
                     continue;
 
-                Vector3d pts_i = it_per_id.feature_per_frame[0].point;
+                Vector3d pts_i = it_per_id.feature_per_frame[0].point;//old中的2d坐标
 
                 for (auto &it_per_frame : it_per_id.feature_per_frame)
                 {
@@ -1026,7 +1038,7 @@ void Estimator::optimization()
                                                                           it_per_id.feature_per_frame[0].uv.y(), it_per_frame.uv.y());
                         ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(f_td, loss_function,
                                                                                         vector<double *>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index], para_Td[0]},
-                                                                                        vector<int>{0, 3});
+                                                                                        vector<int>{0, 3});//只drop掉[0](P0)和[3](old看到的landmark)
                         marginalization_info->addResidualBlockInfo(residual_block_info);
                     }
                     else
@@ -1041,14 +1053,17 @@ void Estimator::optimization()
             }
         }
 
+        //得到每次 IMU 和视觉观测(cost_function)对应的参数块(parameter_blocks)，雅可比矩阵(jacobians)，残差值(residuals)；
         TicToc t_pre_margin;
         marginalization_info->preMarginalize();
         ROS_DEBUG("pre marginalization %f ms", t_pre_margin.toc());
-        
+
+        //多线程计算整个先验项的参数块，雅可比矩阵和残差值
         TicToc t_margin;
         marginalization_info->marginalize();
         ROS_DEBUG("marginalization %f ms", t_margin.toc());
 
+        //用marg之后的待优化参数去生成新的last_marg_info和last_marg_parameter_blocks供下一次使用
         std::unordered_map<long, double *> addr_shift;
         for (int i = 1; i <= WINDOW_SIZE; i++)
         {
@@ -1065,10 +1080,11 @@ void Estimator::optimization()
 
         if (last_marginalization_info)
             delete last_marginalization_info;
-        last_marginalization_info = marginalization_info;
+        last_marginalization_info = marginalization_info;//保存此次marg info
         last_marginalization_parameter_blocks = parameter_blocks;
         
     }
+    //2. marg最新帧1st
     else
     {
         if (last_marginalization_info &&
@@ -1079,6 +1095,7 @@ void Estimator::optimization()
             vector2double();
             if (last_marginalization_info)
             {
+                //准备drop掉2nd的视觉观测
                 vector<int> drop_set;
                 for (int i = 0; i < static_cast<int>(last_marginalization_parameter_blocks.size()); i++)
                 {
