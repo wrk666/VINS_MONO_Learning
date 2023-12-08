@@ -974,7 +974,7 @@ void Estimator::optimization()
         //并不是，因为里面要求Jacobian，所以必须按照标准的格式传入才能求出正确的Jacobian
         if (last_marginalization_info)//如果不是第一帧（因为第一帧没有marg掉之后生成的先验matrix）
         {
-            //选出来old帧的数据的idx（准备marg掉）
+            //如果上次的先验中有本次需要marg的变量，则添加到drop_set中
             vector<int> drop_set;//本次被marg的参数的idx
             for (int i = 0; i < static_cast<int>(last_marginalization_parameter_blocks.size()); i++)
             {
@@ -984,13 +984,15 @@ void Estimator::optimization()
             }
             // construct new marginlization_factor
             // 用上次marg的info初始化这次的marg_factor，再加到这次的info中，info管理marg的操作，
-            // ceres只管调用marg_factor，不管直接管info（当然factor需要info来初始化，所以是marg_factor管info，而不是ceres）
+            // ceres只管调用marg_factor，不直接管info（当然factor需要info来初始化，所以是marg_factor管info，而不是ceres）
             MarginalizationFactor *marginalization_factor = new MarginalizationFactor(last_marginalization_info);
 
             ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(marginalization_factor, NULL,
                                                                            last_marginalization_parameter_blocks,
                                                                            drop_set);
-
+            ROS_DEBUG_STREAM("\nadd MARGIN_OLD last_marginalization_info\n " <<
+                             "\ncost_function->num_residuals(): " << marginalization_factor->num_residuals() <<
+                             "\ncost_function->parameter_block_sizes().size: " << marginalization_factor->parameter_block_sizes().size());
             marginalization_info->addResidualBlockInfo(residual_block_info);
         }
 
@@ -1000,10 +1002,14 @@ void Estimator::optimization()
             if (pre_integrations[1]->sum_dt < 10.0)//两帧间时间间隔少于10s，过长时间间隔的不进行marg
             {
                 IMUFactor* imu_factor = new IMUFactor(pre_integrations[1]);
+                //drop_set表示只marg掉[0][1]，即P0,V0（虽然只drop[0][1]，但是evaluate需要所有的变量来计算Jacobian，所以还是全部传进去）
                 ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(imu_factor, NULL,
-                                                                           vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1]},
-                                                                           vector<int>{0, 1});//drop_set表示只drop掉[0][1]，即P0,V0（这玩意儿为什么不直接只传被drop掉的，还传其他的干嘛？）
+                                   vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1]},
+                                               vector<int>{0, 1});
                 marginalization_info->addResidualBlockInfo(residual_block_info);
+                ROS_DEBUG_STREAM("\nadd imu_factor\n " <<
+                                 "\ncost_function->num_residuals(): " << imu_factor->num_residuals() <<
+                                 "\ncost_function->parameter_block_sizes().size: " << imu_factor->parameter_block_sizes().size());
             }
         }
 
@@ -1045,15 +1051,19 @@ void Estimator::optimization()
                     {
                         ProjectionFactor *f = new ProjectionFactor(pts_i, pts_j);
                         ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(f, loss_function,
-                                                                                       vector<double *>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]},
-                                                                                       vector<int>{0, 3});
+                    vector<double *>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]},
+                               vector<int>{0, 3});
                         marginalization_info->addResidualBlockInfo(residual_block_info);
+                        ROS_DEBUG_STREAM("\nadd ProjectionFactor\n " <<
+                                         "\ncost_function->num_residuals(): " << f->num_residuals() <<
+                                         "\ncost_function->parameter_block_sizes().size: " << f->parameter_block_sizes().size());
                     }
                 }
             }
         }
 
-        //得到每次 IMU 和视觉观测(cost_function)对应的参数块(parameter_blocks)，雅可比矩阵(jacobians)，残差值(residuals)；
+        //得到 上次的先验、IMU测量、视觉观测(都是factor)对应的参数块(parameter_blocks)、雅可比矩阵(jacobians)、残差值(residuals)，
+        //与[0]有关的待优化变量存放于parameter_block_data中
         TicToc t_pre_margin;
         marginalization_info->preMarginalize();
         ROS_DEBUG("pre marginalization %f ms", t_pre_margin.toc());
@@ -1067,6 +1077,7 @@ void Estimator::optimization()
         std::unordered_map<long, double *> addr_shift;
         for (int i = 1; i <= WINDOW_SIZE; i++)
         {
+            //把[1]的地址转换为2的地址，借助reinterpret_cast把double *这个地址转换为正常的log的地址，实际上是地址映射,以后访问P0实际上就是访问P1了，marg后变为了P0，那landmark怎么办？
             addr_shift[reinterpret_cast<long>(para_Pose[i])] = para_Pose[i - 1];
             addr_shift[reinterpret_cast<long>(para_SpeedBias[i])] = para_SpeedBias[i - 1];
         }
@@ -1108,7 +1119,9 @@ void Estimator::optimization()
                 ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(marginalization_factor, NULL,
                                                                                last_marginalization_parameter_blocks,
                                                                                drop_set);
-
+                ROS_DEBUG_STREAM("\nin MARGIN_SECOND_NEW add last_marginalization_info\n " <<
+                                 "\ncost_function->num_residuals(): " << marginalization_factor->num_residuals() <<
+                                 "\ncost_function->parameter_block_sizes().size: " << marginalization_factor->parameter_block_sizes().size());
                 marginalization_info->addResidualBlockInfo(residual_block_info);
             }
 

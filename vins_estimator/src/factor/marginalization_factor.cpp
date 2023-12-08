@@ -3,9 +3,18 @@
 //计算每个残差，对应的Jacobian，并更新 parameter_block_data
 void ResidualBlockInfo::Evaluate()
 {
-    residuals.resize(cost_function->num_residuals());//residual维度
-
+    //每个factor的残差块总维度 和 残差块具体size
+    //residual总维度，先验=last n=76，IMU=15，Visual=2
+    residuals.resize(cost_function->num_residuals());
+    //有td时，先验factor为13(9*1+6*10+6+1)，IMU factor为4(7,9,7,9)，每个feature factor size=5(7,7,7,1)
+    //无td时             12                           4                                  4
     std::vector<int> block_sizes = cost_function->parameter_block_sizes();
+
+    ROS_DEBUG_STREAM("\ncost_function->num_residuals(): " << cost_function->num_residuals() <<
+                          "\ncost_function->parameter_block_sizes().size: " << cost_function->parameter_block_sizes().size());
+    for(int i=0; i<cost_function->parameter_block_sizes().size(); ++i) {
+        ROS_DEBUG("\nparameter_block_sizes()[%d]: %d", i, cost_function->parameter_block_sizes()[i]);
+    }
     raw_jacobians = new double *[block_sizes.size()];//二重指针，指针数组
     jacobians.resize(block_sizes.size());
 
@@ -15,6 +24,7 @@ void ResidualBlockInfo::Evaluate()
         raw_jacobians[i] = jacobians[i].data();//二重指针,是为了配合ceres的形参 double** jacobians，看不懂，给data还能够操作地址？？
         //dim += block_sizes[i] == 7 ? 6 : block_sizes[i];
     }
+    //虚函数，调用的是基类自己实现的Evaluate，即分别是MarginalizationFactor、IMUFactor 和 ProjectionTdFactor(或ProjectionFactor)的Evaluate()函数
     cost_function->Evaluate(parameter_blocks.data(), residuals.data(), raw_jacobians);
 
     //std::vector<int> tmp_idx(block_sizes.size());
@@ -35,6 +45,7 @@ void ResidualBlockInfo::Evaluate()
     //std::cout << saes.eigenvalues() << std::endl;
     //ROS_ASSERT(saes.eigenvalues().minCoeff() >= -1e-6);
 
+    //这里使用的是CauchyLoss（应该是计算一个scale对residuals进行加权，先不细看，TODO：了解CauchyLoss灯loss函数的意义）
     if (loss_function)
     {
         double residual_scaling_, alpha_sq_norm_;
@@ -42,7 +53,8 @@ void ResidualBlockInfo::Evaluate()
         double sq_norm, rho[3];
 
         sq_norm = residuals.squaredNorm();
-        loss_function->Evaluate(sq_norm, rho);
+        //loss_function 为 robust kernel function，in：sq_norm， out：rho  out[0] = rho(sq_norm),out[1] = rho'(sq_norm), out[2] = rho''(sq_norm),
+        loss_function->Evaluate(sq_norm, rho);//求取鲁棒核函数关于||f(x)||^2的一二阶导数
         //printf("sq_norm: %f, rho[0]: %f, rho[1]: %f, rho[2]: %f\n", sq_norm, rho[0], rho[1], rho[2]);
 
         double sqrt_rho1_ = sqrt(rho[1]);
@@ -55,7 +67,7 @@ void ResidualBlockInfo::Evaluate()
         else
         {
             const double D = 1.0 + 2.0 * sq_norm * rho[2] / rho[1];
-            const double alpha = 1.0 - sqrt(D);
+            const double alpha = 1.0 - sqrt(D);//求根公式求方程的根
             residual_scaling_ = sqrt_rho1_ / (1 - alpha);
             alpha_sq_norm_ = alpha / sq_norm;
         }
@@ -91,39 +103,48 @@ void MarginalizationInfo::addResidualBlockInfo(ResidualBlockInfo *residual_block
 {
     factors.emplace_back(residual_block_info);
 
-    std::vector<double *> &parameter_blocks = residual_block_info->parameter_blocks;//上次优化变量的数据（应该是remain）
-    std::vector<int> parameter_block_sizes = residual_block_info->cost_function->parameter_block_sizes();//输入维度
+    std::vector<double *> &parameter_blocks = residual_block_info->parameter_blocks;//每个factor的待优化变量的地址
+    std::vector<int> parameter_block_sizes = residual_block_info->cost_function->parameter_block_sizes();//待优化变量的维度
 
-    //根据addr设置上次remain参数block的size
+    //parameter_blocks.size
+    //有td时，先验factor为13(9*1+6*10+6+1)，IMU factor为4(7,9,7,9)，每个feature factor size=5(7,7,7,1)
+    //无td时             12                           4                                  4
     for (int i = 0; i < static_cast<int>(residual_block_info->parameter_blocks.size()); i++)
     {
         double *addr = parameter_blocks[i];
-        int size = parameter_block_sizes[i];
+        int size = parameter_block_sizes[i];//待优化变量的维度
+        //map没有key时会新建key-value对
         parameter_block_size[reinterpret_cast<long>(addr)] = size;//global size <优化变量内存地址,localSize>
     }
 
     //需要 marg 掉的变量
     for (int i = 0; i < static_cast<int>(residual_block_info->drop_set.size()); i++)
     {
-        double *addr = parameter_blocks[residual_block_info->drop_set[i]];
-        parameter_block_idx[reinterpret_cast<long>(addr)] = 0;//TODO设为0就是覆盖了之前的0？？这个怎么用？看不懂
+        double *addr = parameter_blocks[residual_block_info->drop_set[i]];//获得待marg变量的地址
+        //TODO:看后面怎么用这个idx来marg的，这个second值似乎没有关系，重要的是记录要被marg掉的变量的地址
+        parameter_block_idx[reinterpret_cast<long>(addr)] = 0;//local size <待边缘化的优化变量内存地址,在parameter_block_size中的id>，
     }
 }
 
 
 void MarginalizationInfo::preMarginalize()
 {
+    ROS_INFO_STREAM("\nfactors.size(): " << factors.size());
+    int i=0;
     for (auto it : factors)
     {
-        it->Evaluate();/////////////////////////////////////////////////////////////看到这了
-        std::vector<int> block_sizes = it->cost_function->parameter_block_sizes();
+        ROS_INFO_STREAM("\nin preMarginalize i: "<< ++i);  //很大，能到900多，说明[0]观测到了很多landmark
+        it->Evaluate();//计算每个factor的residual和Jacobian
+        std::vector<int> block_sizes = it->cost_function->parameter_block_sizes(); //residual总维度，先验=last n=76，IMU=15，Visual=2
         for (int i = 0; i < static_cast<int>(block_sizes.size()); i++)
         {
-            long addr = reinterpret_cast<long>(it->parameter_blocks[i]);
+            long addr = reinterpret_cast<long>(it->parameter_blocks[i]);//parameter_blocks是vector<double *>，存放的是数据的地址
             int size = block_sizes[i];
+            //如果优化变量中没有这个数据就new一片内存放置
             if (parameter_block_data.find(addr) == parameter_block_data.end())
             {
                 double *data = new double[size];
+                //dst,src
                 memcpy(data, it->parameter_blocks[i], sizeof(double) * size);
                 parameter_block_data[addr] = data;
             }
@@ -174,52 +195,59 @@ void* ThreadsConstructA(void* threadsstruct)
     return threadsstruct;
 }
 
-//不好的地方，这里是camera和landmark一起marg的，会导致求逆比较慢(这说的是啥？)
+
 void MarginalizationInfo::marginalize()
 {
     int pos = 0;
+    //it.first是要被marg掉的变量的地址,将其size累加起来就得到了所有被marg的变量的总localSize=m
+    //marg的放一起，共m维，remain放一起，共n维
     for (auto &it : parameter_block_idx)
     {
-        it.second = pos;
-        pos += localSize(parameter_block_size[it.first]);
+        it.second = pos;//也算是排序1
+        pos += localSize(parameter_block_size[it.first]);//PQ7为改为6维
     }
 
-    m = pos;
+    m = pos;//要被marg的变量的总维度
 
+    int tmp_n = 0;
+    //与[0]相关总维度
     for (const auto &it : parameter_block_size)
     {
-        if (parameter_block_idx.find(it.first) == parameter_block_idx.end())
+        if (parameter_block_idx.find(it.first) == parameter_block_idx.end())//将不在drop_set中的剩下的维度加起来，这一步实际上算的就是n
         {
-            parameter_block_idx[it.first] = pos;
+            parameter_block_idx[it.first] = pos;//排序2
+            tmp_n += localSize(it.second);
             pos += localSize(it.second);
         }
     }
 
-    n = pos - m;
+    n = pos - m;//remain变量的总维度，这样写建立了n和m间的关系，表意更强
+    ROS_DEBUG("\nn: %d, tmp_n: %d", n, tmp_n);
 
     //ROS_DEBUG("marginalization, pos: %d, m: %d, n: %d, size: %d", pos, m, n, (int)parameter_block_idx.size());
 
     TicToc t_summing;
-    Eigen::MatrixXd A(pos, pos);
-    Eigen::VectorXd b(pos);
+    Eigen::MatrixXd A(pos, pos);//总系数矩阵
+    Eigen::VectorXd b(pos);//总误差项
     A.setZero();
     b.setZero();
-    //构建信息矩阵可以多线程构建，这里注释掉的是单线程构建的
+    //构建信息矩阵可以多线程构建
     //single thread
-    /*
     for (auto it : factors)
     {
+        //J^T*J
         for (int i = 0; i < static_cast<int>(it->parameter_blocks.size()); i++)
         {
-            int idx_i = parameter_block_idx[reinterpret_cast<long>(it->parameter_blocks[i])];
+            int idx_i = parameter_block_idx[reinterpret_cast<long>(it->parameter_blocks[i])];//要被marg的second=0
             int size_i = localSize(parameter_block_size[reinterpret_cast<long>(it->parameter_blocks[i])]);
-            Eigen::MatrixXd jacobian_i = it->jacobians[i].leftCols(size_i);
+            Eigen::MatrixXd jacobian_i = it->jacobians[i].leftCols(size_i);//remain变量的初始jacobian
             for (int j = i; j < static_cast<int>(it->parameter_blocks.size()); j++)
             {
                 int idx_j = parameter_block_idx[reinterpret_cast<long>(it->parameter_blocks[j])];
                 int size_j = localSize(parameter_block_size[reinterpret_cast<long>(it->parameter_blocks[j])]);
-                Eigen::MatrixXd jacobian_j = it->jacobians[j].leftCols(size_j);
+                Eigen::MatrixXd jacobian_j = it->jacobians[j].leftCols(size_j);//marg变量的初始jacobian
                 if (i == j)
+                    //注意这里是+=，可能之前别的变量在这个地方已经有过值了，所以要+=
                     A.block(idx_i, idx_j, size_i, size_j) += jacobian_i.transpose() * jacobian_j;
                 else
                 {
@@ -227,15 +255,14 @@ void MarginalizationInfo::marginalize()
                     A.block(idx_j, idx_i, size_j, size_i) = A.block(idx_i, idx_j, size_i, size_j).transpose();
                 }
             }
-            b.segment(idx_i, size_i) += jacobian_i.transpose() * it->residuals;
+            b.segment(idx_i, size_i) += jacobian_i.transpose() * it->residuals;//J^T*e
         }
     }
     ROS_INFO("summing up costs %f ms", t_summing.toc());
-    */
 
 
     //multi thread
-    TicToc t_thread_summing;
+/*    TicToc t_thread_summing;
     pthread_t tids[NUM_THREADS];
     ThreadsStruct threadsstruct[NUM_THREADS];
     int i = 0;
@@ -264,19 +291,23 @@ void MarginalizationInfo::marginalize()
         pthread_join( tids[i], NULL ); 
         A += threadsstruct[i].A;
         b += threadsstruct[i].b;
-    }
+    }*/
     //ROS_DEBUG("thread summing up costs %f ms", t_thread_summing.toc());
     //ROS_INFO("A diff %f , b diff %f ", (A - tmp_A).sum(), (b - tmp_b).sum());
 
 
-    //TODO
+    /*求Amm的逆矩阵时，为了保证数值稳定性，做了Amm=1/2*(Amm+Amm^T)的运算，Amm本身是一个对称矩阵，所以  等式成立。接着对Amm进行了特征值分解,再求逆，更加的快速*/
+    //数值计算中，由于计算机浮点数精度的限制，有时候数值误差可能导致 Amm 不精确地保持对称性。
+    //通过将 Amm 更新为其本身与其转置的平均值，可以强制保持对称性，提高数值稳定性。这种对称性维护的策略在数值计算中比较常见。
     Eigen::MatrixXd Amm = 0.5 * (A.block(0, 0, m, m) + A.block(0, 0, m, m).transpose());
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes(Amm);
 
     //ROS_ASSERT_MSG(saes.eigenvalues().minCoeff() >= -1e-4, "min eigenvalue %f", saes.eigenvalues().minCoeff());
 
-    //remove的矩阵快求逆
-    Eigen::MatrixXd Amm_inv = saes.eigenvectors() * Eigen::VectorXd((saes.eigenvalues().array() > eps).select(saes.eigenvalues().array().inverse(), 0)).asDiagonal() * saes.eigenvectors().transpose();
+    //marg的矩阵块求逆,特征值分解求逆更快
+    Eigen::MatrixXd Amm_inv = saes.eigenvectors()
+                            * Eigen::VectorXd((saes.eigenvalues().array() > eps).select(saes.eigenvalues().array().inverse(), 0)).asDiagonal()
+                            * saes.eigenvectors().transpose();
     //printf("error1: %f\n", (Amm * Amm_inv - Eigen::MatrixXd::Identity(m, m)).sum());
 
     Eigen::VectorXd bmm = b.segment(0, m);
@@ -288,15 +319,17 @@ void MarginalizationInfo::marginalize()
     A = Arr - Arm * Amm_inv * Amr;
     b = brr - Arm * Amm_inv * bmm;
 
-    //由于Ceres里面不能直接操作信息矩阵，所以这里从信息矩阵中反解出来了Jacobian和residual，而g2o是可以的，g2o里只需要维护H和b
+    //由于Ceres里面不能直接操作信息矩阵，所以这里从信息矩阵中反解出来了Jacobian和residual，而g2o是可以的，ceres里只需要维护H和b
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes2(A);
+    //对称阵
     Eigen::VectorXd S = Eigen::VectorXd((saes2.eigenvalues().array() > eps).select(saes2.eigenvalues().array(), 0));
+    //对称阵的倒数阵
     Eigen::VectorXd S_inv = Eigen::VectorXd((saes2.eigenvalues().array() > eps).select(saes2.eigenvalues().array().inverse(), 0));
 
     Eigen::VectorXd S_sqrt = S.cwiseSqrt();//开根号
     Eigen::VectorXd S_inv_sqrt = S_inv.cwiseSqrt();
 
-
+    //从H和b中反解出Jacobian和residual
     linearized_jacobians = S_sqrt.asDiagonal() * saes2.eigenvectors().transpose();
     linearized_residuals = S_inv_sqrt.asDiagonal() * saes2.eigenvectors().transpose() * b;
     //std::cout << A << std::endl
@@ -308,19 +341,19 @@ void MarginalizationInfo::marginalize()
 
 std::vector<double *> MarginalizationInfo::getParameterBlocks(std::unordered_map<long, double *> &addr_shift)
 {
-    std::vector<double *> keep_block_addr;
+    std::vector<double *> keep_block_addr;//remain的优化变量的地址
     keep_block_size.clear();
     keep_block_idx.clear();
     keep_block_data.clear();
 
     for (const auto &it : parameter_block_idx)
     {
-        if (it.second >= m)
+        if (it.second >= m)//如果是remain部分
         {
             keep_block_size.push_back(parameter_block_size[it.first]);
             keep_block_idx.push_back(parameter_block_idx[it.first]);
             keep_block_data.push_back(parameter_block_data[it.first]);
-            keep_block_addr.push_back(addr_shift[it.first]);
+            keep_block_addr.push_back(addr_shift[it.first]);//将地址保存在keep_block_addr中
         }
     }
     sum_block_size = std::accumulate(std::begin(keep_block_size), std::end(keep_block_size), 0);
@@ -339,6 +372,7 @@ MarginalizationFactor::MarginalizationFactor(MarginalizationInfo* _marginalizati
     }
     //printf("residual size: %d, %d\n", cnt, n);
     set_num_residuals(marginalization_info->n);//设置输出维度，上一个先验中的remain的size(我猜除了landmark，减掉marg掉的pi,qi,vi共减去15)
+    ROS_DEBUG("\nin MarginalizationFactor last n is: %d", marginalization_info->n);
 };
 
 //这是marg的factor，求Jacobian

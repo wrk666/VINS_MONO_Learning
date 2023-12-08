@@ -249,7 +249,7 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
         Eigen::Matrix3d R0 = Rs[imu_i] * ric[0];
         P0.leftCols<3>() = Eigen::Matrix3d::Identity();
         P0.rightCols<1>() = Eigen::Vector3d::Zero();
-        ROS_DEBUG_STREAM("P0:\n" << P0 <<"\nR0:\n" << R0 << "\nt0:\n" << t0.transpose());
+//        ROS_DEBUG_STREAM("P0:\n" << P0 <<"\nR0:\n" << R0 << "\nt0:\n" << t0.transpose());
         //构建Dy=0矩阵，SVD求解
         for (auto &it_per_frame : it_per_id.feature_per_frame)//遍历该id对应的所有不同帧上对此landmark的观测
         {
