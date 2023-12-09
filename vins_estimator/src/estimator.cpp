@@ -187,8 +187,9 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
             if(result)
             {
                 solver_flag = NON_LINEAR;//求解
-                solveOdometry();//后端求解
+                solveOdometry();//重新三角化，并后端求解
                 slideWindow();
+                ROS_DEBUG("Ps[0] addr: %ld", reinterpret_cast<long>(&Ps[0]));
                 f_manager.removeFailures();
                 ROS_INFO("Initialization finish!");
                 last_R = Rs[WINDOW_SIZE];
@@ -225,6 +226,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
 
         TicToc t_margin;
         slideWindow();
+        ROS_DEBUG("Ps[0] addr: %ld", reinterpret_cast<long>(&Ps[0]));
         f_manager.removeFailures();//去掉未三角化出正深度的landmark
         ROS_DEBUG("marginalization costs: %fms", t_margin.toc());
         // prepare output of VINS
@@ -831,6 +833,9 @@ void Estimator::optimization()
         MarginalizationFactor *marginalization_factor = new MarginalizationFactor(last_marginalization_info);//里面设置了上次先验的什么size，现在还不懂
         problem.AddResidualBlock(marginalization_factor, NULL,
                                  last_marginalization_parameter_blocks);
+        ROS_DEBUG("last_marginalization_parameter_blocks[0] long addr: %ld, [1] long addr:%ld",
+                  reinterpret_cast<long>(last_marginalization_parameter_blocks[0]),
+                  reinterpret_cast<long>(last_marginalization_parameter_blocks[1]));
     }
 
     //2.添加IMU残差
@@ -1044,7 +1049,7 @@ void Estimator::optimization()
                                                                           it_per_id.feature_per_frame[0].uv.y(), it_per_frame.uv.y());
                         ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(f_td, loss_function,
                                                                                         vector<double *>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index], para_Td[0]},
-                                                                                        vector<int>{0, 3});//只drop掉[0](P0)和[3](old看到的landmark)
+                                                                                        vector<int>{0, 3});//只drop掉[0](P0)和[3](tracking始于old的landmark)
                         marginalization_info->addResidualBlockInfo(residual_block_info);
                     }
                     else
@@ -1068,19 +1073,31 @@ void Estimator::optimization()
         marginalization_info->preMarginalize();
         ROS_DEBUG("pre marginalization %f ms", t_pre_margin.toc());
 
-        //多线程计算整个先验项的参数块，雅可比矩阵和残差值
+        //多线程计算在X0处的整个先验项的参数块，雅可比矩阵和残差值
+        //5、多线程构造先验项舒尔补AX=b的结构，在X0处线性化计算Jacobian和残差
         TicToc t_margin;
         marginalization_info->marginalize();
         ROS_DEBUG("marginalization %f ms", t_margin.toc());
 
         //用marg之后的待优化参数去生成新的last_marg_info和last_marg_parameter_blocks供下一次使用
+        //6.调整参数块在下一次窗口中对应的位置（往前移一格），注意这里是指针，后面slideWindow中会赋新值，这里只是提前占座
         std::unordered_map<long, double *> addr_shift;
         for (int i = 1; i <= WINDOW_SIZE; i++)
         {
-            //把[1]的地址转换为2的地址，借助reinterpret_cast把double *这个地址转换为正常的log的地址，实际上是地址映射,以后访问P0实际上就是访问P1了，marg后变为了P0，那landmark怎么办？
+            //让指针指向
             addr_shift[reinterpret_cast<long>(para_Pose[i])] = para_Pose[i - 1];
             addr_shift[reinterpret_cast<long>(para_SpeedBias[i])] = para_SpeedBias[i - 1];
+
+            double* tmp_para_ptr = para_Pose[i-1];
+            double* tmp_ptr = addr_shift[reinterpret_cast<long>(para_Pose[i])];
+//            for(int j=0; j<7; ++j) {
+//                ROS_DEBUG("\npara_Pose[%d] data: %f", i, *tmp_para_ptr);
+//                ++tmp_para_ptr;
+//                ROS_DEBUG("\naddr_shift[reinterpret_cast<long>(para_Pose[%d])] data: %f", i, *tmp_ptr);
+//                ++tmp_ptr;
+//            }
         }
+
         for (int i = 0; i < NUM_OF_CAM; i++)
             addr_shift[reinterpret_cast<long>(para_Ex_Pose[i])] = para_Ex_Pose[i];
         if (ESTIMATE_TD)
@@ -1106,7 +1123,7 @@ void Estimator::optimization()
             vector2double();
             if (last_marginalization_info)
             {
-                //准备drop掉2nd的视觉观测
+                //只drop掉2nd的视觉观测（IMU部分是在slideWindow内继承的）
                 vector<int> drop_set;
                 for (int i = 0; i < static_cast<int>(last_marginalization_parameter_blocks.size()); i++)
                 {
@@ -1142,6 +1159,7 @@ void Estimator::optimization()
                     continue;
                 else if (i == WINDOW_SIZE)
                 {
+                    //看不懂啥意思，后面不是还要操作slideWindow吗，这里搞地址干什么？
                     addr_shift[reinterpret_cast<long>(para_Pose[i])] = para_Pose[i - 1];
                     addr_shift[reinterpret_cast<long>(para_SpeedBias[i])] = para_SpeedBias[i - 1];
                 }
@@ -1178,7 +1196,7 @@ void Estimator::slideWindow()
     if (marginalization_flag == MARGIN_OLD)
     {
         double t_0 = Headers[0].stamp.toSec();
-        back_R0 = Rs[0];
+        back_R0 = Rs[0];//
         back_P0 = Ps[0];
         if (frame_count == WINDOW_SIZE)
         {
@@ -1233,7 +1251,7 @@ void Estimator::slideWindow()
                 all_image_frame.erase(t_0);//erase掉old帧
 
             }
-            slideWindowOld();//求prior，删除某些变量
+            slideWindowOld();//管理feature(landmark)
 //            ROS_DEBUG("marg_flag: %d, after marg, all_image_frame.size(): %lu, WINDOW_SIZE: %d",
 //                      marginalization_flag, all_image_frame.size(), WINDOW_SIZE);
         }
@@ -1299,11 +1317,13 @@ void Estimator::slideWindowOld()
     {
         Matrix3d R0, R1;
         Vector3d P0, P1;
-        R0 = back_R0 * ric[0];//这可能是在求marg掉的变量留下来的prior
+        //Twb * Tbc = Twc
+        //0：被marg掉的T_marg,1：新的第[0]帧的T_new
+        R0 = back_R0 * ric[0];
         R1 = Rs[0] * ric[0];
         P0 = back_P0 + back_R0 * tic[0];
         P1 = Ps[0] + Rs[0] * tic[0];
-        f_manager.removeBackShiftDepth(R0, P0, R1, P1);//TODO：这个暂时不知道什么意思？
+        f_manager.removeBackShiftDepth(R0, P0, R1, P1);//为什么要转移深度？landmark不是删除了吗？
     }
     else
         f_manager.removeBack();

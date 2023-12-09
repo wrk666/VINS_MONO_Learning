@@ -10,11 +10,11 @@ void ResidualBlockInfo::Evaluate()
     //无td时             12                           4                                  4
     std::vector<int> block_sizes = cost_function->parameter_block_sizes();
 
-    ROS_DEBUG_STREAM("\ncost_function->num_residuals(): " << cost_function->num_residuals() <<
-                          "\ncost_function->parameter_block_sizes().size: " << cost_function->parameter_block_sizes().size());
-    for(int i=0; i<cost_function->parameter_block_sizes().size(); ++i) {
-        ROS_DEBUG("\nparameter_block_sizes()[%d]: %d", i, cost_function->parameter_block_sizes()[i]);
-    }
+//    ROS_DEBUG_STREAM("\ncost_function->num_residuals(): " << cost_function->num_residuals() <<
+//                          "\ncost_function->parameter_block_sizes().size: " << cost_function->parameter_block_sizes().size());
+//    for(int i=0; i<cost_function->parameter_block_sizes().size(); ++i) {
+//        ROS_DEBUG("\nparameter_block_sizes()[%d]: %d", i, cost_function->parameter_block_sizes()[i]);
+//    }
     raw_jacobians = new double *[block_sizes.size()];//二重指针，指针数组
     jacobians.resize(block_sizes.size());
 
@@ -129,11 +129,11 @@ void MarginalizationInfo::addResidualBlockInfo(ResidualBlockInfo *residual_block
 
 void MarginalizationInfo::preMarginalize()
 {
-    ROS_INFO_STREAM("\nfactors.size(): " << factors.size());
+//    ROS_INFO_STREAM("\nfactors.size(): " << factors.size());
     int i=0;
     for (auto it : factors)
     {
-        ROS_INFO_STREAM("\nin preMarginalize i: "<< ++i);  //很大，能到900多，说明[0]观测到了很多landmark
+//        ROS_INFO_STREAM("\nin preMarginalize i: "<< ++i);  //很大，能到900多，说明[0]观测到了很多landmark
         it->Evaluate();//计算每个factor的residual和Jacobian
         std::vector<int> block_sizes = it->cost_function->parameter_block_sizes(); //residual总维度，先验=last n=76，IMU=15，Visual=2
         for (int i = 0; i < static_cast<int>(block_sizes.size()); i++)
@@ -165,14 +165,18 @@ int MarginalizationInfo::globalSize(int size) const
 void* ThreadsConstructA(void* threadsstruct)
 {
     ThreadsStruct* p = ((ThreadsStruct*)threadsstruct);
+
+    //遍历该线程分配的所有factors，所有观测项
     for (auto it : p->sub_factors)
     {
+        //遍历该factor中的所有参数块P0，V0等
         for (int i = 0; i < static_cast<int>(it->parameter_blocks.size()); i++)
         {
             int idx_i = p->parameter_block_idx[reinterpret_cast<long>(it->parameter_blocks[i])];
             int size_i = p->parameter_block_size[reinterpret_cast<long>(it->parameter_blocks[i])];
-            if (size_i == 7)
+            if (size_i == 7) //对于pose来说，是7维的,最后一维为0，这里取左边6
                 size_i = 6;
+            //只提取local size部分，对于pose来说，是7维的,最后一维为0，这里取左边6维
             Eigen::MatrixXd jacobian_i = it->jacobians[i].leftCols(size_i);
             for (int j = i; j < static_cast<int>(it->parameter_blocks.size()); j++)
             {
@@ -181,8 +185,10 @@ void* ThreadsConstructA(void* threadsstruct)
                 if (size_j == 7)
                     size_j = 6;
                 Eigen::MatrixXd jacobian_j = it->jacobians[j].leftCols(size_j);
+                //主对角线
                 if (i == j)
                     p->A.block(idx_i, idx_j, size_i, size_j) += jacobian_i.transpose() * jacobian_j;
+                //非主对角线
                 else
                 {
                     p->A.block(idx_i, idx_j, size_i, size_j) += jacobian_i.transpose() * jacobian_j;
@@ -232,7 +238,7 @@ void MarginalizationInfo::marginalize()
     A.setZero();
     b.setZero();
     //构建信息矩阵可以多线程构建
-    //single thread
+/*    //single thread
     for (auto it : factors)
     {
         //J^T*J
@@ -246,9 +252,10 @@ void MarginalizationInfo::marginalize()
                 int idx_j = parameter_block_idx[reinterpret_cast<long>(it->parameter_blocks[j])];
                 int size_j = localSize(parameter_block_size[reinterpret_cast<long>(it->parameter_blocks[j])]);
                 Eigen::MatrixXd jacobian_j = it->jacobians[j].leftCols(size_j);//marg变量的初始jacobian
+                //主对角线，注意这里是+=，可能之前别的变量在这个地方已经有过值了，所以要+=
                 if (i == j)
-                    //注意这里是+=，可能之前别的变量在这个地方已经有过值了，所以要+=
                     A.block(idx_i, idx_j, size_i, size_j) += jacobian_i.transpose() * jacobian_j;
+                //非主对角线
                 else
                 {
                     A.block(idx_i, idx_j, size_i, size_j) += jacobian_i.transpose() * jacobian_j;
@@ -258,20 +265,24 @@ void MarginalizationInfo::marginalize()
             b.segment(idx_i, size_i) += jacobian_i.transpose() * it->residuals;//J^T*e
         }
     }
-    ROS_INFO("summing up costs %f ms", t_summing.toc());
+    ROS_INFO("summing up costs %f ms", t_summing.toc());*/
 
 
     //multi thread
-/*    TicToc t_thread_summing;
-    pthread_t tids[NUM_THREADS];
+    TicToc t_thread_summing;
+    pthread_t tids[NUM_THREADS];//4个线程构建
+    //携带每个线程的输入输出信息
     ThreadsStruct threadsstruct[NUM_THREADS];
+    //将先验约束因子平均分配到4个线程中
     int i = 0;
+    //
     for (auto it : factors)
     {
         threadsstruct[i].sub_factors.push_back(it);
         i++;
         i = i % NUM_THREADS;
     }
+    //将每个线程构建的A和b加起来
     for (int i = 0; i < NUM_THREADS; i++)
     {
         TicToc zero_matrix;
@@ -286,12 +297,13 @@ void MarginalizationInfo::marginalize()
             ROS_BREAK();
         }
     }
-    for( int i = NUM_THREADS - 1; i >= 0; i--)  
+    //将每个线程构建的A和b加起来
+    for( int i = NUM_THREADS - 1; i >= 0; i--)
     {
-        pthread_join( tids[i], NULL ); 
+        pthread_join( tids[i], NULL );//阻塞等待线程完成
         A += threadsstruct[i].A;
         b += threadsstruct[i].b;
-    }*/
+    }
     //ROS_DEBUG("thread summing up costs %f ms", t_thread_summing.toc());
     //ROS_INFO("A diff %f , b diff %f ", (A - tmp_A).sum(), (b - tmp_b).sum());
 
@@ -353,9 +365,11 @@ std::vector<double *> MarginalizationInfo::getParameterBlocks(std::unordered_map
             keep_block_size.push_back(parameter_block_size[it.first]);
             keep_block_idx.push_back(parameter_block_idx[it.first]);
             keep_block_data.push_back(parameter_block_data[it.first]);
-            keep_block_addr.push_back(addr_shift[it.first]);//将地址保存在keep_block_addr中
+            keep_block_addr.push_back(addr_shift[it.first]);//待优化变量的首地址需要不变，但是首地址对应的变量是P0，需要在slideWindow中被冒泡到后面delete掉
         }
     }
+    ROS_DEBUG("keep_block_addr[0] long addr: %ld, [1] long addr: %ld",
+              reinterpret_cast<long>(keep_block_addr[0]), reinterpret_cast<long>(keep_block_addr[1]));
     sum_block_size = std::accumulate(std::begin(keep_block_size), std::end(keep_block_size), 0);
 
     return keep_block_addr;

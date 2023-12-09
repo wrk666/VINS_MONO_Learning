@@ -233,7 +233,7 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
         //至少被测到2次 && 且观测到该特征点的第一帧图像应该早于或等于滑动窗口第4最新关键帧
         if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
             continue;
-        //跳过深度为正的点，负深度是需要重新估计的点
+        //只三角化刚才标记为负的点
         if (it_per_id.estimated_depth > 0)
             continue;
         int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
@@ -262,6 +262,7 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
             Eigen::Matrix<double, 3, 4> P;
             P.leftCols<3>() = R.transpose();//Tci_cj^T = Tcj_ci
             P.rightCols<1>() = -R.transpose() * t;//Tcj_ci
+            //λ*[u v w] = Tcj_ci * [x y z 1]这里的[x y z 1]应该没有实际的意义，可能是在ci系下的什么意思，左边整体是cj系下的3d坐标
             //normalized之后不是归一化坐标了，但是模长为1，f为imu_j帧的观测[u',v',1]^T，标准化为[u,v,w]^T
             Eigen::Vector3d f = it_per_frame.point.normalized();
 //            ROS_DEBUG_STREAM("before normalized f: " << it_per_frame.point.transpose() <<"   after normalized f: " << f.transpose());
@@ -276,8 +277,10 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
                 continue;
         }
         ROS_ASSERT(svd_idx == svd_A.rows());
+        //y取σ4对应的取特征向量，即最后一个 rightCols<1> size=(4,1)
         Eigen::Vector4d svd_V = Eigen::JacobiSVD<Eigen::MatrixXd>(svd_A, Eigen::ComputeThinV).matrixV().rightCols<1>();
-        double svd_method = svd_V[2] / svd_V[3];//齐次化
+        //齐次化得camera系下的深度
+        double svd_method = svd_V[2] / svd_V[3];
         //it_per_id->estimated_depth = -b / A;
         //it_per_id->estimated_depth = svd_V[2] / svd_V[3];
 
@@ -308,6 +311,7 @@ void FeatureManager::removeOutlier()
     }
 }
 
+//由于三角化出的camera系下的深度都绑定在start_frame上，所以当marg掉start_frame时，要将深度传递给后面的帧，这里绑定在了start_frame下一帧
 void FeatureManager::removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3d marg_P, Eigen::Matrix3d new_R, Eigen::Vector3d new_P)
 {
     for (auto it = feature.begin(), it_next = feature.begin();
@@ -315,6 +319,9 @@ void FeatureManager::removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3
     {
         it_next++;
 
+        //不始于第[0]帧的landmark的start_frame前移，
+        //始于第[0]帧的landmark，1.如果只在[0]tracking，则直接删掉（因为仅1帧算不出深度），2.如果tracking多于1帧，则将深度传递给start_frame+1帧
+        //管理marg之后的start_frame，要往前移1
         if (it->start_frame != 0)
             it->start_frame--;
         else
@@ -328,15 +335,16 @@ void FeatureManager::removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3
             }
             else
             {
-                Eigen::Vector3d pts_i = uv_i * it->estimated_depth;
-                Eigen::Vector3d w_pts_i = marg_R * pts_i + marg_P;
-                Eigen::Vector3d pts_j = new_R.transpose() * (w_pts_i - new_P);
+                Eigen::Vector3d pts_i = uv_i * it->estimated_depth;//归一化->camera_marg
+                Eigen::Vector3d w_pts_i = marg_R * pts_i + marg_P;//Twc_marg * camera = world
+                Eigen::Vector3d pts_j = new_R.transpose() * (w_pts_i - new_P);//Twc_new^(-1) * world=camera_new
                 double dep_j = pts_j(2);
                 if (dep_j > 0)
                     it->estimated_depth = dep_j;
                 else
                     it->estimated_depth = INIT_DEPTH;
             }
+            ROS_DEBUG("feature id: %d, start_frame: %d, tracking_size: %lu",it->feature_id, it->start_frame, it->feature_per_frame.size());
         }
         // remove tracking-lost feature after marginalize
         /*
@@ -346,6 +354,7 @@ void FeatureManager::removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3
         }
         */
     }
+    ROS_DEBUG("this removeBackShiftDepth end");
 }
 
 void FeatureManager::removeBack()
@@ -360,12 +369,13 @@ void FeatureManager::removeBack()
         else
         {
             it->feature_per_frame.erase(it->feature_per_frame.begin());
-            if (it->feature_per_frame.size() == 0)
+            if (it->feature_per_frame.size() == 0)//如果只在[0]tracking上，则marg掉上个观测之后就没有观测了，删除这个id的feature
                 feature.erase(it);
         }
     }
 }
 
+//删除2nd
 void FeatureManager::removeFront(int frame_count)
 {
     for (auto it = feature.begin(), it_next = feature.begin(); it != feature.end(); it = it_next)
