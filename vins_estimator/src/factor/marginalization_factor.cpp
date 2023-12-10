@@ -115,13 +115,14 @@ void MarginalizationInfo::addResidualBlockInfo(ResidualBlockInfo *residual_block
         int size = parameter_block_sizes[i];//待优化变量的维度
         //map没有key时会新建key-value对
         parameter_block_size[reinterpret_cast<long>(addr)] = size;//global size <优化变量内存地址,localSize>
+        ROS_DEBUG("in addResidualBlockInfo size: %d", size);
     }
 
     //需要 marg 掉的变量
     for (int i = 0; i < static_cast<int>(residual_block_info->drop_set.size()); i++)
     {
         double *addr = parameter_blocks[residual_block_info->drop_set[i]];//获得待marg变量的地址
-        //TODO:看后面怎么用这个idx来marg的，这个second值似乎没有关系，重要的是记录要被marg掉的变量的地址
+        //要marg的变量先占个key的座，marg之前将m放在一起，n放在一起
         parameter_block_idx[reinterpret_cast<long>(addr)] = 0;//local size <待边缘化的优化变量内存地址,在parameter_block_size中的id>，
     }
 }
@@ -162,6 +163,7 @@ int MarginalizationInfo::globalSize(int size) const
     return size == 6 ? 7 : size;
 }
 
+//线程函数
 void* ThreadsConstructA(void* threadsstruct)
 {
     ThreadsStruct* p = ((ThreadsStruct*)threadsstruct);
@@ -389,7 +391,7 @@ MarginalizationFactor::MarginalizationFactor(MarginalizationInfo* _marginalizati
     ROS_DEBUG("\nin MarginalizationFactor last n is: %d", marginalization_info->n);
 };
 
-//这是marg的factor，求Jacobian
+//先验部分的factor，求Jacobian
 bool MarginalizationFactor::Evaluate(double const *const *parameters, double *residuals, double **jacobians) const
 {
     //printf("internal addr,%d, %d\n", (int)parameter_block_sizes().size(), num_residuals());
@@ -406,14 +408,20 @@ bool MarginalizationFactor::Evaluate(double const *const *parameters, double *re
     for (int i = 0; i < static_cast<int>(marginalization_info->keep_block_size.size()); i++)
     {
         int size = marginalization_info->keep_block_size[i];
-        int idx = marginalization_info->keep_block_idx[i] - m;
+        int idx = marginalization_info->keep_block_idx[i] - m;//因为当时存的是marg时的idx，是在m后面的，现在单看先验块的话就需要减去m
+        //优化后，本次marg前的待优化变量
         Eigen::VectorXd x = Eigen::Map<const Eigen::VectorXd>(parameters[i], size);
+        //优化前，上次maerg后的变量，即Jacobian的线性化点x0
         Eigen::VectorXd x0 = Eigen::Map<const Eigen::VectorXd>(marginalization_info->keep_block_data[i], size);
+        //求优化后的变量与优化前的差，dx即公式中的δxp。
+        //IMU block、landmark depth bolck直接相减，而camera pose block的rotation部分需使用四元数计算δxp
         if (size != 7)
             dx.segment(idx, size) = x - x0;
         else
         {
+            //translation直接相减
             dx.segment<3>(idx + 0) = x.head<3>() - x0.head<3>();
+            //rotation部分：δq=[1, 1/2 delta theta]^T(为何非要取正的？)
             dx.segment<3>(idx + 3) = 2.0 * Utility::positify(Eigen::Quaterniond(x0(6), x0(3), x0(4), x0(5)).inverse() * Eigen::Quaterniond(x(6), x(3), x(4), x(5))).vec();
             if (!((Eigen::Quaterniond(x0(6), x0(3), x0(4), x0(5)).inverse() * Eigen::Quaterniond(x(6), x(3), x(4), x(5))).w() >= 0))
             {
@@ -421,7 +429,9 @@ bool MarginalizationFactor::Evaluate(double const *const *parameters, double *re
             }
         }
     }
+    //更新误差：f' = f + J*δxp
     Eigen::Map<Eigen::VectorXd>(residuals, n) = marginalization_info->linearized_residuals + marginalization_info->linearized_jacobians * dx;
+    //Jacobian保持不变（FEJ要解决这样做带来的解的零空间变化的问题）
     if (jacobians)
     {
 

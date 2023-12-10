@@ -65,7 +65,7 @@ class MarginalizationInfo
 
     std::vector<int> keep_block_size; //global size
     std::vector<int> keep_block_idx;  //local size
-    std::vector<double *> keep_block_data;//之湖上看到的帖子说这事在marg过程中反解出的线性化点的参数值x0
+    std::vector<double *> keep_block_data;//之前看到的帖子说这是在marg过程中反解出的线性化点的参数值x0
 
     Eigen::MatrixXd linearized_jacobians;//线性化点处的Jacobian
     Eigen::VectorXd linearized_residuals;//线性化点处的residual

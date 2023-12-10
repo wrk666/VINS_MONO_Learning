@@ -225,7 +225,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         }
 
         TicToc t_margin;
-        slideWindow();
+        slideWindow();//根据marg flag marg掉old或者2nd，管理优化变量，数据，深度等
         ROS_DEBUG("Ps[0] addr: %ld", reinterpret_cast<long>(&Ps[0]));
         f_manager.removeFailures();//去掉未三角化出正深度的landmark
         ROS_DEBUG("marginalization costs: %fms", t_margin.toc());
@@ -705,7 +705,7 @@ void Estimator::double2vector()
         relo_r = rot_diff * Quaterniond(relo_Pose[6], relo_Pose[3], relo_Pose[4], relo_Pose[5]).normalized().toRotationMatrix();
         relo_t = rot_diff * Vector3d(relo_Pose[0] - para_Pose[0][0],
                                      relo_Pose[1] - para_Pose[0][1],
-                                     relo_Pose[2] - para_Pose[0][2]) + origin_P0;//保证第[0]针不变之后，+origin_P0转为世界系下的t
+                                     relo_Pose[2] - para_Pose[0][2]) + origin_P0;//保证第[0]帧不变之后，+origin_P0转为世界系下的t
         //优化前后loop closure frame v 的drift T_prev_now
         double drift_correct_yaw;
         //loop closure frame优化前后的yaw drift, prev-now = (R_prev_now).yaw
@@ -1112,7 +1112,7 @@ void Estimator::optimization()
         last_marginalization_parameter_blocks = parameter_blocks;
         
     }
-    //2. marg最新帧1st
+    //2. marg最新帧1st：仅marg掉视觉pose
     else
     {
         if (last_marginalization_info &&
@@ -1123,7 +1123,7 @@ void Estimator::optimization()
             vector2double();
             if (last_marginalization_info)
             {
-                //只drop掉2nd的视觉观测（IMU部分是在slideWindow内继承的）
+                //只drop掉2nd的视觉pose（IMU部分是在slideWindow内继承和delete的）
                 vector<int> drop_set;
                 for (int i = 0; i < static_cast<int>(last_marginalization_parameter_blocks.size()); i++)
                 {
@@ -1273,7 +1273,7 @@ void Estimator::slideWindow()
                 //imu数据保存，相当于一个较长的KF，eg：
                 //     |-|-|-|-|-----|
                 //                ↑
-                //            这段img为1st时，2nd不是KF，扔掉了这个1st的img，但buf了IMU数据，所以这段imu数据较长
+                //            这段img为1st时，2nd不是KF，扔掉了这个2nd的img，但buf了IMU数据，所以这段imu数据较长
                 dt_buf[frame_count - 1].push_back(tmp_dt);
                 linear_acceleration_buf[frame_count - 1].push_back(tmp_linear_acceleration);
                 angular_velocity_buf[frame_count - 1].push_back(tmp_angular_velocity);
