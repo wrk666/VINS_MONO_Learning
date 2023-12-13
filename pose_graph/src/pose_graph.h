@@ -35,7 +35,7 @@ using namespace DBoW2;
 class PoseGraph
 {
 public:
-	PoseGraph();
+	PoseGraph();//构造
 	~PoseGraph();
 	void registerPub(ros::NodeHandle &n);
 	void addKeyFrame(KeyFrame* cur_kf, bool flag_detect_loop);
@@ -62,12 +62,12 @@ private:
 	void addKeyFrameIntoVoc(KeyFrame* keyframe);
 	void optimize4DoF();
 	void updatePath();
-	list<KeyFrame*> keyframelist;
-	std::mutex m_keyframelist;
+	list<KeyFrame*> keyframelist;//KF
+	std::mutex m_keyframelist;//一些互斥锁
 	std::mutex m_optimize_buf;
 	std::mutex m_path;
 	std::mutex m_drift;
-	std::thread t_optimization;
+	std::thread t_optimization;//优化线程
 	std::queue<int> optimize_buf;
 
 	int global_index;
@@ -77,8 +77,8 @@ private:
 	int earliest_loop_index;
 	int base_sequence;
 
-	BriefDatabase db;
-	BriefVocabulary* voc;
+	BriefDatabase db;//描述子数据库,from 3rd lib
+	BriefVocabulary* voc; //词典
 
 	ros::Publisher pub_pg_path;
 	ros::Publisher pub_base_path;

@@ -709,14 +709,14 @@ void Estimator::double2vector()
                                      relo_Pose[2] - para_Pose[0][2]) + origin_P0;//保证第[0]帧不变之后，+origin_P0转为世界系下的t
         //优化前后loop closure frame v 的drift T_prev_now
         double drift_correct_yaw;
-        //loop closure frame优化前后的yaw drift, prev-now = (R_prev_now).yaw
+        //loop closure frame优化前后的yaw drift, prev-now = (R_prev_now).yaw TODO：（可能是反的）
         drift_correct_yaw = Utility::R2ypr(prev_relo_r).x() - Utility::R2ypr(relo_r).x();
         //r变化R_prev_now
         drift_correct_r = Utility::ypr2R(Vector3d(drift_correct_yaw, 0, 0));
         //t变化t_now_prev = w_t_prev - Rprev_now * w_t_now
         drift_correct_t = prev_relo_t - drift_correct_r * relo_t;
 
-        //loop closure frame v与relo frame local(窗口内的local loop帧)的relative pose：T_local_v，可能用于快速重定位
+        //loop closure frame v与relo frame local(窗口内的local loop帧)的relative pose：T_local_v(Tji,j>i)，可能用于快速重定位
         //Rw_local^(-1)*( (w)tw_v - (w)t_w_local ) = R_local_w * (w)t_local_v = (local)t_local_v（表示Tlocal_v的平移部分，指向是从local指向v）
         relo_relative_t = relo_r.transpose() * (Ps[relo_frame_local_index] - relo_t);
         //Rw_local^(-1)*Rw_v = Rlocal_v
@@ -827,16 +827,16 @@ void Estimator::optimization()
     TicToc t_whole, t_prepare;
     vector2double();
 
-    //1.添加边缘化残差（先验部分）TODO:看
+    //1.添加边缘化残差（先验部分）
     if (last_marginalization_info)
     {
         // construct new marginlization_factor
         MarginalizationFactor *marginalization_factor = new MarginalizationFactor(last_marginalization_info);//里面设置了上次先验的什么size，现在还不懂
         problem.AddResidualBlock(marginalization_factor, NULL,
                                  last_marginalization_parameter_blocks);
-        ROS_DEBUG("last_marginalization_parameter_blocks[0] long addr: %ld, [1] long addr:%ld",
-                  reinterpret_cast<long>(last_marginalization_parameter_blocks[0]),
-                  reinterpret_cast<long>(last_marginalization_parameter_blocks[1]));
+//        ROS_DEBUG("last_marginalization_parameter_blocks[0] long addr: %ld, [1] long addr:%ld",
+//                  reinterpret_cast<long>(last_marginalization_parameter_blocks[0]),
+//                  reinterpret_cast<long>(last_marginalization_parameter_blocks[1]));
     }
 
     //2.添加IMU残差
@@ -996,9 +996,9 @@ void Estimator::optimization()
             ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(marginalization_factor, NULL,
                                                                            last_marginalization_parameter_blocks,
                                                                            drop_set);
-            ROS_DEBUG_STREAM("\nadd MARGIN_OLD last_marginalization_info\n " <<
-                             "\ncost_function->num_residuals(): " << marginalization_factor->num_residuals() <<
-                             "\ncost_function->parameter_block_sizes().size: " << marginalization_factor->parameter_block_sizes().size());
+//            ROS_DEBUG_STREAM("\nadd MARGIN_OLD last_marginalization_info\n " <<
+//                             "\ncost_function->num_residuals(): " << marginalization_factor->num_residuals() <<
+//                             "\ncost_function->parameter_block_sizes().size: " << marginalization_factor->parameter_block_sizes().size());
             marginalization_info->addResidualBlockInfo(residual_block_info);
         }
 
@@ -1013,9 +1013,9 @@ void Estimator::optimization()
                                    vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1]},
                                                vector<int>{0, 1});
                 marginalization_info->addResidualBlockInfo(residual_block_info);
-                ROS_DEBUG_STREAM("\nadd imu_factor\n " <<
-                                 "\ncost_function->num_residuals(): " << imu_factor->num_residuals() <<
-                                 "\ncost_function->parameter_block_sizes().size: " << imu_factor->parameter_block_sizes().size());
+//                ROS_DEBUG_STREAM("\nadd imu_factor\n " <<
+//                                 "\ncost_function->num_residuals(): " << imu_factor->num_residuals() <<
+//                                 "\ncost_function->parameter_block_sizes().size: " << imu_factor->parameter_block_sizes().size());
             }
         }
 
@@ -1060,9 +1060,9 @@ void Estimator::optimization()
                     vector<double *>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]},
                                vector<int>{0, 3});
                         marginalization_info->addResidualBlockInfo(residual_block_info);
-                        ROS_DEBUG_STREAM("\nadd ProjectionFactor\n " <<
-                                         "\ncost_function->num_residuals(): " << f->num_residuals() <<
-                                         "\ncost_function->parameter_block_sizes().size: " << f->parameter_block_sizes().size());
+//                        ROS_DEBUG_STREAM("\nadd ProjectionFactor\n " <<
+//                                         "\ncost_function->num_residuals(): " << f->num_residuals() <<
+//                                         "\ncost_function->parameter_block_sizes().size: " << f->parameter_block_sizes().size());
                     }
                 }
             }
@@ -1137,9 +1137,9 @@ void Estimator::optimization()
                 ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(marginalization_factor, NULL,
                                                                                last_marginalization_parameter_blocks,
                                                                                drop_set);
-                ROS_DEBUG_STREAM("\nin MARGIN_SECOND_NEW add last_marginalization_info\n " <<
-                                 "\ncost_function->num_residuals(): " << marginalization_factor->num_residuals() <<
-                                 "\ncost_function->parameter_block_sizes().size: " << marginalization_factor->parameter_block_sizes().size());
+//                ROS_DEBUG_STREAM("\nin MARGIN_SECOND_NEW add last_marginalization_info\n " <<
+//                                 "\ncost_function->num_residuals(): " << marginalization_factor->num_residuals() <<
+//                                 "\ncost_function->parameter_block_sizes().size: " << marginalization_factor->parameter_block_sizes().size());
                 marginalization_info->addResidualBlockInfo(residual_block_info);
             }
 

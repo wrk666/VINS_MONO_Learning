@@ -115,7 +115,7 @@ void MarginalizationInfo::addResidualBlockInfo(ResidualBlockInfo *residual_block
         int size = parameter_block_sizes[i];//待优化变量的维度
         //map没有key时会新建key-value对
         parameter_block_size[reinterpret_cast<long>(addr)] = size;//global size <优化变量内存地址,localSize>
-        ROS_DEBUG("in addResidualBlockInfo size: %d", size);
+//        ROS_DEBUG("in addResidualBlockInfo size: %d", size);
     }
 
     //需要 marg 掉的变量
@@ -388,7 +388,7 @@ MarginalizationFactor::MarginalizationFactor(MarginalizationInfo* _marginalizati
     }
     //printf("residual size: %d, %d\n", cnt, n);
     set_num_residuals(marginalization_info->n);//设置输出维度，上一个先验中的remain的size(我猜除了landmark，减掉marg掉的pi,qi,vi共减去15)
-    ROS_DEBUG("\nin MarginalizationFactor last n is: %d", marginalization_info->n);
+//    ROS_DEBUG("\nin MarginalizationFactor last n is: %d", marginalization_info->n);
 };
 
 //先验部分的factor，求Jacobian

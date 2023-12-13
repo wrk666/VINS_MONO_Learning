@@ -5,7 +5,7 @@ PoseGraph::PoseGraph()
     posegraph_visualization = new CameraPoseVisualization(1.0, 0.0, 1.0, 1.0);
     posegraph_visualization->setScale(0.1);
     posegraph_visualization->setLineWidth(0.01);
-	t_optimization = std::thread(&PoseGraph::optimize4DoF, this);
+	t_optimization = std::thread(&PoseGraph::optimize4DoF, this);//创建了一个4自由度位姿图优化线程。
     earliest_loop_index = -1;
     t_drift = Eigen::Vector3d(0, 0, 0);
     yaw_drift = 0;
@@ -24,6 +24,7 @@ PoseGraph::~PoseGraph()
 	t_optimization.join();
 }
 
+//发布轨迹的topic
 void PoseGraph::registerPub(ros::NodeHandle &n)
 {
     pub_pg_path = n.advertise<nav_msgs::Path>("pose_graph_path", 1000);
@@ -33,6 +34,7 @@ void PoseGraph::registerPub(ros::NodeHandle &n)
         pub_path[i] = n.advertise<nav_msgs::Path>("path_" + to_string(i), 1000);
 }
 
+//加载Brief字典
 void PoseGraph::loadVocabulary(std::string voc_path)
 {
     voc = new BriefVocabulary(voc_path);
@@ -47,6 +49,7 @@ void PoseGraph::addKeyFrame(KeyFrame* cur_kf, bool flag_detect_loop)
     //shift to base frame
     Vector3d vio_P_cur;
     Matrix3d vio_R_cur;
+    //sequence数量？如果没建立那就新建一个，没建可能是不满足img_callback的条件
     if (sequence_cnt != cur_kf->sequence)
     {
         sequence_cnt++;
@@ -58,13 +61,15 @@ void PoseGraph::addKeyFrame(KeyFrame* cur_kf, bool flag_detect_loop)
         r_drift = Eigen::Matrix3d::Identity();
         m_drift.unlock();
     }
-    
+
+    //获得cur的Twi，并用shift更新
     cur_kf->getVioPose(vio_P_cur, vio_R_cur);
-    vio_P_cur = w_r_vio * vio_P_cur + w_t_vio;
+    vio_P_cur = w_r_vio * vio_P_cur + w_t_vio;//这是什么操作？啥也不干？
     vio_R_cur = w_r_vio *  vio_R_cur;
     cur_kf->updateVioPose(vio_P_cur, vio_R_cur);
     cur_kf->index = global_index;
     global_index++;
+    //进行回环检测，return回环候选帧的索引----看到这了-------------------------------
 	int loop_index = -1;
     if (flag_detect_loop)
     {
@@ -98,7 +103,8 @@ void PoseGraph::addKeyFrame(KeyFrame* cur_kf, bool flag_detect_loop)
             w_R_cur = w_R_old * relative_q;
             double shift_yaw;
             Matrix3d shift_r;
-            Vector3d shift_t; 
+            Vector3d shift_t;
+            //yaw_w_vio（可能是反的）
             shift_yaw = Utility::R2ypr(w_R_cur).x() - Utility::R2ypr(vio_R_cur).x();
             shift_r = Utility::ypr2R(Vector3d(shift_yaw, 0, 0));
             shift_t = w_P_cur - w_R_cur * vio_R_cur.transpose() * vio_P_cur; 
@@ -289,6 +295,7 @@ void PoseGraph::loadKeyFrame(KeyFrame* cur_kf, bool flag_detect_loop)
     m_keyframelist.unlock();
 }
 
+//返回索引为index的关键帧
 KeyFrame* PoseGraph::getKeyFrame(int index)
 {
 //    unique_lock<mutex> lock(m_keyframelist);
@@ -304,6 +311,7 @@ KeyFrame* PoseGraph::getKeyFrame(int index)
         return NULL;
 }
 
+//回环检测
 int PoseGraph::detectLoop(KeyFrame* keyframe, int frame_index)
 {
     // put image into image_pool; for visualization
@@ -388,6 +396,7 @@ int PoseGraph::detectLoop(KeyFrame* keyframe, int frame_index)
 
 }
 
+//将当前帧的描述子存入字典数据库
 void PoseGraph::addKeyFrameIntoVoc(KeyFrame* keyframe)
 {
     // put image into image_pool; for visualization
@@ -403,6 +412,7 @@ void PoseGraph::addKeyFrameIntoVoc(KeyFrame* keyframe)
     db.add(keyframe->brief_descriptors);
 }
 
+//四自由度位姿图优化
 void PoseGraph::optimize4DoF()
 {
     while(true)
@@ -581,6 +591,7 @@ void PoseGraph::optimize4DoF()
     }
 }
 
+//更新轨迹并发布
 void PoseGraph::updatePath()
 {
     m_keyframelist.lock();
@@ -696,7 +707,7 @@ void PoseGraph::updatePath()
     m_keyframelist.unlock();
 }
 
-
+//保存位姿图到file_path
 void PoseGraph::savePoseGraph()
 {
     m_keyframelist.lock();
@@ -752,6 +763,8 @@ void PoseGraph::savePoseGraph()
     printf("save pose graph time: %f s\n", tmp_t.toc() / 1000);
     m_keyframelist.unlock();
 }
+
+//从file_path读取位姿图
 void PoseGraph::loadPoseGraph()
 {
     TicToc tmp_t;
@@ -859,6 +872,7 @@ void PoseGraph::loadPoseGraph()
         brief_file.close();
         fclose(keypoints_file);
 
+        //T,R,t都是w_i
         KeyFrame* keyframe = new KeyFrame(time_stamp, index, VIO_T, VIO_R, PG_T, PG_R, image, loop_index, loop_info, keypoints, keypoints_norm, brief_descriptors);
         loadKeyFrame(keyframe, 0);
         if (cnt % 20 == 0)
@@ -872,6 +886,7 @@ void PoseGraph::loadPoseGraph()
     base_sequence = 0;
 }
 
+//发布topic：pub_pg_path、pub_path、pub_base_path
 void PoseGraph::publish()
 {
     for (int i = 1; i <= sequence_cnt; i++)
@@ -889,6 +904,7 @@ void PoseGraph::publish()
     //posegraph_visualization->publish_by(pub_pose_graph, path[sequence_cnt].header);
 }
 
+//更新关键帧的回环信息
 void PoseGraph::updateKeyFrameLoop(int index, Eigen::Matrix<double, 8, 1 > &_loop_info)
 {
     KeyFrame* kf = getKeyFrame(index);

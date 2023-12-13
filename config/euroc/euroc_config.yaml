@@ -64,10 +64,10 @@ gyr_w: 2.0e-6       # gyroscope bias random work noise standard deviation.     #
 g_norm: 9.81007     # gravity magnitude
 
 #loop closure parameters
-loop_closure: 1                    # start loop closure
+loop_closure: 1                    # start loop closure  1代表需要loop
 load_previous_pose_graph: 0        # load and reuse previous pose graph; load from 'pose_graph_save_path' 进行map reuse时使用，与之前的pose graph进行融合
 fast_relocalization: 0             # useful in real-time and large project
-pose_graph_save_path: "/home/shaozu/output/pose_graph/" # save and load path
+pose_graph_save_path: "/home/wrk/File/SLAM/My_course/VIO/Output/pose_graph/" # save and load path
 
 #unsynchronization parameters
 estimate_td: 1                      # online estimate time offset between camera and imu  IMU和camera的时间偏移(以IMU为准)，1则进行估计
