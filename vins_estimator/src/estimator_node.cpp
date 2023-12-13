@@ -39,6 +39,7 @@ bool init_feature = 0;
 bool init_imu = 1;
 double last_imu_t = 0;
 
+//使用优化之后的结果来更新状态
 void predict(const sensor_msgs::ImuConstPtr &imu_msg)
 {
     double t = imu_msg->header.stamp.toSec();
@@ -369,12 +370,19 @@ void process()
             std_msgs::Header header = img_msg->header;
             header.frame_id = "world";//为什么都设为“world”？
 
+            //发布后端优化后的1.PQV  2.带时间戳的pose(PQ)  3.重定位后的pose
             pubOdometry(estimator, header);//"odometry"
+            //历史KF的t（应该是那10个大红点）
             pubKeyPoses(estimator, header);//"key_poses"
+            //使用外参转为camera pose
             pubCameraPose(estimator, header);//"camera_pose"
+            //发布现有的和即将被marg掉的landmark
             pubPointCloud(estimator, header);//"history_cloud"
+            //发布transform Twb和Tic
             pubTF(estimator, header);//"extrinsic" Tbc
+            //当2nd时KF时，发布2nd的Twb 和 2nd中的feature的2D,归一化3D，camera 3D坐标
             pubKeyframe(estimator);//"keyframe_point"、"keyframe_pose"
+            //在double2vector()中求得relo_relative_t，relo_relative_q,代表T_local_v，后面用于重定位
             if (relo_msg != NULL)
                 pubRelocalization(estimator);//"relo_relative_pose"
             //ROS_ERROR("end: %f, at %f", img_msg->header.stamp.toSec(), ros::Time::now().toSec());

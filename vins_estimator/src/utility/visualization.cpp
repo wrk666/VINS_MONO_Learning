@@ -103,17 +103,18 @@ void printStatistics(const Estimator &estimator, double t)
         ROS_INFO("td %f", estimator.td);
 }
 
-//发布最新的由IMU直接递推得到的PQV(应该是用于高频闭环控制？)
+//发布后端优化后的1.PQV  2.带时间戳的pose(PQ)  3.重定位后的pose
 void pubOdometry(const Estimator &estimator, const std_msgs::Header &header)
 {
     if (estimator.solver_flag == Estimator::SolverFlag::NON_LINEAR)
     {
+        //pub里程计输出
         nav_msgs::Odometry odometry;
         odometry.header = header;
         odometry.header.frame_id = "world";
         odometry.child_frame_id = "world";
         Quaterniond tmp_Q;
-        tmp_Q = Quaterniond(estimator.Rs[WINDOW_SIZE]);
+        tmp_Q = Quaterniond(estimator.Rs[WINDOW_SIZE]);//double转为四元数
         odometry.pose.pose.position.x = estimator.Ps[WINDOW_SIZE].x();
         odometry.pose.pose.position.y = estimator.Ps[WINDOW_SIZE].y();
         odometry.pose.pose.position.z = estimator.Ps[WINDOW_SIZE].z();
@@ -126,6 +127,7 @@ void pubOdometry(const Estimator &estimator, const std_msgs::Header &header)
         odometry.twist.twist.linear.z = estimator.Vs[WINDOW_SIZE].z();
         pub_odometry.publish(odometry);
 
+        //发布路径(translation)
         geometry_msgs::PoseStamped pose_stamped;
         pose_stamped.header = header;
         pose_stamped.header.frame_id = "world";
@@ -135,6 +137,7 @@ void pubOdometry(const Estimator &estimator, const std_msgs::Header &header)
         path.poses.push_back(pose_stamped);
         pub_path.publish(path);
 
+        //重定位时计算出的被loop帧的现在与之前的drift，把现在的拉回到之前的上面去
         Vector3d correct_t;
         Vector3d correct_v;
         Quaterniond correct_q;
@@ -149,13 +152,14 @@ void pubOdometry(const Estimator &estimator, const std_msgs::Header &header)
         odometry.pose.pose.orientation.z = correct_q.z();
         odometry.pose.pose.orientation.w = correct_q.w();
 
+        //发布重定位的path(是(R|t))
         pose_stamped.pose = odometry.pose.pose;
         relo_path.header = header;
         relo_path.header.frame_id = "world";
         relo_path.poses.push_back(pose_stamped);
         pub_relo_path.publish(relo_path);
 
-        // write result to file
+        // write result to file 输出到文件
         ofstream foutC(VINS_RESULT_PATH, ios::app);
         foutC.setf(ios::fixed, ios::floatfield);
         foutC.precision(0);
@@ -175,6 +179,7 @@ void pubOdometry(const Estimator &estimator, const std_msgs::Header &header)
     }
 }
 
+//应该是和可视化有关的配置，但是改了之后没啥用，后面再来看
 void pubKeyPoses(const Estimator &estimator, const std_msgs::Header &header)
 {
     if (estimator.key_poses.size() == 0)
@@ -186,7 +191,7 @@ void pubKeyPoses(const Estimator &estimator, const std_msgs::Header &header)
     key_poses.type = visualization_msgs::Marker::SPHERE_LIST;
     key_poses.action = visualization_msgs::Marker::ADD;
     key_poses.pose.orientation.w = 1.0;
-    key_poses.lifetime = ros::Duration();
+    key_poses.lifetime = ros::Duration();//不自动删除
 
     //static int key_poses_id = 0;
     key_poses.id = 0; //key_poses_id++;
@@ -194,13 +199,14 @@ void pubKeyPoses(const Estimator &estimator, const std_msgs::Header &header)
     key_poses.scale.y = 0.05;
     key_poses.scale.z = 0.05;
     key_poses.color.r = 1.0;
-    key_poses.color.a = 1.0;
+//    key_poses.color.b = 1.0;//这个现在改了没用
+    key_poses.color.a = 1.0;//透明度  float[0,1],0则全透明，看不见
 
     for (int i = 0; i <= WINDOW_SIZE; i++)
     {
         geometry_msgs::Point pose_marker;
         Vector3d correct_pose;
-        correct_pose = estimator.key_poses[i];
+        correct_pose = estimator.key_poses[i];//
         pose_marker.x = correct_pose.x();
         pose_marker.y = correct_pose.y();
         pose_marker.z = correct_pose.z();
@@ -250,8 +256,10 @@ void pubPointCloud(const Estimator &estimator, const std_msgs::Header &header)
     {
         int used_num;
         used_num = it_per_id.feature_per_frame.size();
+        //tracking两次
         if (!(used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
             continue;
+        //早点tracking到的，且深度求解成功
         if (it_per_id.start_frame > WINDOW_SIZE * 3.0 / 4.0 || it_per_id.solve_flag != 1)
             continue;
         int imu_i = it_per_id.start_frame;
@@ -268,6 +276,7 @@ void pubPointCloud(const Estimator &estimator, const std_msgs::Header &header)
 
 
     // pub margined potin
+    // 发布下次要被marg掉的landmark(removeBackShiftDepth中feature_per_frame.size()<2才被rease掉，这里等于2的还被pub出来)
     sensor_msgs::PointCloud margin_cloud;
     margin_cloud.header = header;
 
@@ -319,9 +328,10 @@ void pubTF(const Estimator &estimator, const std_msgs::Header &header)
     q.setY(correct_q.y());
     q.setZ(correct_q.z());
     transform.setRotation(q);
+    //Twb
     br.sendTransform(tf::StampedTransform(transform, header.stamp, "world", "body"));
 
-    // camera frame
+    // camera frame  我理解，发布了Twb之后再发Tic就能基于body得到camera的pose
     transform.setOrigin(tf::Vector3(estimator.tic[0].x(),
                                     estimator.tic[0].y(),
                                     estimator.tic[0].z()));
@@ -347,9 +357,11 @@ void pubTF(const Estimator &estimator, const std_msgs::Header &header)
 
 }
 
+//当2nd时KF时，发布2nd的Twb 和 2nd中的feature的2D,归一化3D，camera 3D坐标
 void pubKeyframe(const Estimator &estimator)
 {
     // pub camera pose, 2D-3D points of keyframe
+    // 求解且是marg old
     if (estimator.solver_flag == Estimator::SolverFlag::NON_LINEAR && estimator.marginalization_flag == 0)
     {
         int i = WINDOW_SIZE - 2;
@@ -373,14 +385,16 @@ void pubKeyframe(const Estimator &estimator)
 
 
         sensor_msgs::PointCloud point_cloud;
-        point_cloud.header = estimator.Headers[WINDOW_SIZE - 2];
+        point_cloud.header = estimator.Headers[WINDOW_SIZE - 2];//2nd
         for (auto &it_per_id : estimator.f_manager.feature)
         {
             int frame_size = it_per_id.feature_per_frame.size();
+            //这条件应该是选出2nd中tarcking上的feature
             if(it_per_id.start_frame < WINDOW_SIZE - 2 && it_per_id.start_frame + frame_size - 1 >= WINDOW_SIZE - 2 && it_per_id.solve_flag == 1)
             {
 
                 int imu_i = it_per_id.start_frame;
+                //归一化[x,y,1]转为camera下3D
                 Vector3d pts_i = it_per_id.feature_per_frame[0].point * it_per_id.estimated_depth;
                 Vector3d w_pts_i = estimator.Rs[imu_i] * (estimator.ric[0] * pts_i + estimator.tic[0])
                                       + estimator.Ps[imu_i];
@@ -405,6 +419,7 @@ void pubKeyframe(const Estimator &estimator)
     }
 }
 
+//在double2vector()中求得relo_relative_t，relo_relative_q,代表T_local_v，后面用于重定位
 void pubRelocalization(const Estimator &estimator)
 {
     nav_msgs::Odometry odometry;

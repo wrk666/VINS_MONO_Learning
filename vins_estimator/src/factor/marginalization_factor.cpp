@@ -292,7 +292,7 @@ void MarginalizationInfo::marginalize()
         threadsstruct[i].b = Eigen::VectorXd::Zero(pos);
         threadsstruct[i].parameter_block_size = parameter_block_size;
         threadsstruct[i].parameter_block_idx = parameter_block_idx;
-        int ret = pthread_create( &tids[i], NULL, ThreadsConstructA ,(void*)&(threadsstruct[i]));
+        int ret = pthread_create( &tids[i], NULL, ThreadsConstructA ,(void*)&(threadsstruct[i]));//参数4是arg，void*类型，取其地址并强制类型转换
         if (ret != 0)
         {
             ROS_WARN("pthread_create error");
@@ -302,7 +302,7 @@ void MarginalizationInfo::marginalize()
     //将每个线程构建的A和b加起来
     for( int i = NUM_THREADS - 1; i >= 0; i--)
     {
-        pthread_join( tids[i], NULL );//阻塞等待线程完成
+        pthread_join( tids[i], NULL );//阻塞等待线程完成，这里的A和b的+=操作在主线程中是阻塞的，+=的顺序是pthread_join的顺序
         A += threadsstruct[i].A;
         b += threadsstruct[i].b;
     }

@@ -229,8 +229,9 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         ROS_DEBUG("Ps[0] addr: %ld", reinterpret_cast<long>(&Ps[0]));
         f_manager.removeFailures();//去掉未三角化出正深度的landmark
         ROS_DEBUG("marginalization costs: %fms", t_margin.toc());
-        // prepare output of VINS
+        // prepare output of VINS(本次优化且划窗之后，保存WINDOW内的所有KF的translation)
         key_poses.clear();
+        //slideWindow后最后两个Ps相同，所以用11个数据无所谓
         for (int i = 0; i <= WINDOW_SIZE; i++)
             key_poses.push_back(Ps[i]);
 
@@ -569,7 +570,7 @@ void Estimator::solveOdometry()
     if (solver_flag == NON_LINEAR)
     {
         TicToc t_tri;
-        //在world系下重新三角化得在world下的landmark
+        //在optimize和marg，在新的start_frame上重新三角化landmark
         f_manager.triangulate(Ps, tic, ric);
         ROS_DEBUG("triangulation costs %f", t_tri.toc());
         optimization();
@@ -1189,6 +1190,8 @@ void Estimator::optimization()
     ROS_DEBUG("whole time for ceres: %f", t_whole.toc());
 }
 
+//滑窗之后，WINDOW的最后两个Ps，Vs，Rs，Bas，Bgs相同，无论是old还是new，
+//因为后面预积分要用最新的预积分初值，所以为了保证窗口内有11个观测，使最后两个相同
 void Estimator::slideWindow()
 {
     TicToc t_margin;
