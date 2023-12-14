@@ -86,7 +86,7 @@ void CameraPoseVisualization::add_loopedge(const Eigen::Vector3d& p0, const Eige
     marker.lifetime = ros::Duration();
     //marker.scale.x = 0.4;
     marker.scale.x = 0.02;
-    marker.color.r = 1.0f;
+    marker.color.r = 1.0f;//loop边用红色显示
     //marker.color.g = 1.0f;
     //marker.color.b = 1.0f;
     marker.color.a = 1.0;

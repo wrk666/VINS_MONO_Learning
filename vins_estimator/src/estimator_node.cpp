@@ -326,16 +326,17 @@ void process()
                 for (unsigned int i = 0; i < relo_msg->points.size(); i++)
                 {
                     Vector3d u_v_id;
-                    u_v_id.x() = relo_msg->points[i].x;
+                    u_v_id.x() = relo_msg->points[i].x;//i帧归一化xy
                     u_v_id.y() = relo_msg->points[i].y;
-                    u_v_id.z() = relo_msg->points[i].z;
+                    u_v_id.z() = relo_msg->points[i].z;//feature id
                     match_points.push_back(u_v_id);
                 }
+                //Tw_bi（i就是old帧，理解为loop frame v）
                 Vector3d relo_t(relo_msg->channels[0].values[0], relo_msg->channels[0].values[1], relo_msg->channels[0].values[2]);
                 Quaterniond relo_q(relo_msg->channels[0].values[3], relo_msg->channels[0].values[4], relo_msg->channels[0].values[5], relo_msg->channels[0].values[6]);
                 Matrix3d relo_r = relo_q.toRotationMatrix();
                 int frame_index;
-                frame_index = relo_msg->channels[0].values[7];
+                frame_index = relo_msg->channels[0].values[7];//old frame的帧号
                 estimator.setReloFrame(frame_stamp, frame_index, match_points, relo_t, relo_r);//设置重定位帧(relo包括loop detection等操作)
             }
 
@@ -416,7 +417,7 @@ int main(int argc, char **argv)//argc:参数个数，argv：参数值，是char*
     ros::Subscriber sub_image = n.subscribe("/feature_tracker/feature", 2000, feature_callback);
     //订阅/feature_tracker/restart，callbak中清空feature_buf，imu_buf，清除estimator的state和已读取的config paramter
     ros::Subscriber sub_restart = n.subscribe("/feature_tracker/restart", 2000, restart_callback);
-    //订阅/pose_graph/match_points，callback中relo_buf.push(points_msg);   TODO：relo的数据结构后面需要探究
+    //订阅/pose_graph/match_points，callback中relo_buf.push(points_msg);  接受来自pose_graph的FAST_RELOCATION的消息
     ros::Subscriber sub_relo_points = n.subscribe("/pose_graph/match_points", 2000, relocalization_callback);
 
     std::thread measurement_process{process};//创建VIO主线程

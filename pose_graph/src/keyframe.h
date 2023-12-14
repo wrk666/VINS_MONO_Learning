@@ -23,10 +23,12 @@ using namespace DVision;
 class BriefExtractor
 {
 public:
-  virtual void operator()(const cv::Mat &im, vector<cv::KeyPoint> &keys, vector<BRIEF::bitset> &descriptors) const;
-  BriefExtractor(const std::string &pattern_file);
+    //读取 构建字典时使用的相同的Brief模板文件，构造BriefExtractord
+    virtual void operator()(const cv::Mat &im, vector<cv::KeyPoint> &keys, vector<BRIEF::bitset> &descriptors) const;
+    //运算符重载了“()”来计算描述子。
+    BriefExtractor(const std::string &pattern_file);
 
-  DVision::BRIEF m_brief;
+    DVision::BRIEF m_brief;
 };
 
 class KeyFrame
@@ -75,7 +77,7 @@ public:
 
 
 	double time_stamp; 
-	int index;
+	int index;  //索引,用于查询KF
 	int local_index;
 	Eigen::Vector3d vio_T_w_i; 
 	Eigen::Matrix3d vio_R_w_i; 
@@ -85,20 +87,20 @@ public:
 	Eigen::Matrix3d origin_vio_R;
 	cv::Mat image;
 	cv::Mat thumbnail;
-	vector<cv::Point3f> point_3d; 
-	vector<cv::Point2f> point_2d_uv;
-	vector<cv::Point2f> point_2d_norm;
+	vector<cv::Point3f> point_3d; //landmark在world系下的3D坐标
+	vector<cv::Point2f> point_2d_uv;//landmark的观测像素坐标
+	vector<cv::Point2f> point_2d_norm;//landmark的归一化平面xy坐标
 	vector<double> point_id;
-	vector<cv::KeyPoint> keypoints;
-	vector<cv::KeyPoint> keypoints_norm;
-	vector<cv::KeyPoint> window_keypoints;
+	vector<cv::KeyPoint> keypoints;//新提的FAST features的2d uv
+	vector<cv::KeyPoint> keypoints_norm;//新提的FAST features的归一化xy
+	vector<cv::KeyPoint> window_keypoints;//原有的features
 	vector<BRIEF::bitset> brief_descriptors;
 	vector<BRIEF::bitset> window_brief_descriptors;
 	bool has_fast_point;
 	int sequence;
 
 	bool has_loop;
-	int loop_index;
-	Eigen::Matrix<double, 8, 1 > loop_info;
+	int loop_index;//i帧index
+	Eigen::Matrix<double, 8, 1 > loop_info;//两帧之间的Tbi_bj: t(3)，q(4); yaw(1)
 };
 

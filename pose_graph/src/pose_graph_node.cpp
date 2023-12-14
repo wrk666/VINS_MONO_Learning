@@ -184,6 +184,7 @@ void imu_forward_callback(const nav_msgs::Odometry::ConstPtr &forward_msg)
 }
 
 //重定位回调函数，将重定位帧的相对位姿放入loop_info，updateKeyFrameLoop()进行回环更新
+//TODO:后端优化完了发回来消息之后调用的，qt是T后_前
 void relo_relative_pose_callback(const nav_msgs::Odometry::ConstPtr &pose_msg)
 {
     Vector3d relative_t = Vector3d(pose_msg->pose.pose.position.x,
@@ -412,6 +413,7 @@ void process()
 
                 for (unsigned int i = 0; i < point_msg->points.size(); i++)
                 {
+                    //来自estimator发布的keyframe_point topic中的world系下的3D landmark
                     cv::Point3f p_3d;
                     p_3d.x = point_msg->points[i].x;
                     p_3d.y = point_msg->points[i].y;
@@ -420,6 +422,7 @@ void process()
 
                     cv::Point2f p_2d_uv, p_2d_normal;
                     double p_id;
+                    //接收的estimator发布的keyframe_point topic，channel分别是：归一化平面xy，观测xy，feature_id
                     p_2d_normal.x = point_msg->channels[i].values[0];
                     p_2d_normal.y = point_msg->channels[i].values[1];
                     p_2d_uv.x = point_msg->channels[i].values[2];
@@ -537,7 +540,7 @@ int main(int argc, char **argv)
 
         VISUALIZE_IMU_FORWARD = fsSettings["visualize_imu_forward"];
         LOAD_PREVIOUS_POSE_GRAPH = fsSettings["load_previous_pose_graph"];
-        FAST_RELOCALIZATION = fsSettings["fast_relocalization"];
+        FAST_RELOCALIZATION = fsSettings["fast_relocalization"];//快速重定位
         VINS_RESULT_PATH = VINS_RESULT_PATH + "/vins_result_loop.csv";
         std::ofstream fout(VINS_RESULT_PATH, std::ios::out);
         fout.close();

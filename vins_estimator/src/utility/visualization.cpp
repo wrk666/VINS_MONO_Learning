@@ -20,6 +20,7 @@ CameraPoseVisualization keyframebasevisual(0.0, 0.0, 1.0, 1.0);
 static double sum_of_path = 0;
 static Vector3d last_path(0.0, 0.0, 0.0);
 
+//注册发布topic
 void registerPub(ros::NodeHandle &n)
 {
     pub_latest_odometry = n.advertise<nav_msgs::Odometry>("imu_propagate", 1000);
@@ -115,6 +116,7 @@ void pubOdometry(const Estimator &estimator, const std_msgs::Header &header)
         odometry.child_frame_id = "world";
         Quaterniond tmp_Q;
         tmp_Q = Quaterniond(estimator.Rs[WINDOW_SIZE]);//double转为四元数
+        //从pose_graph的使用方法来看，这里发布的PQ就是Twi
         odometry.pose.pose.position.x = estimator.Ps[WINDOW_SIZE].x();
         odometry.pose.pose.position.y = estimator.Ps[WINDOW_SIZE].y();
         odometry.pose.pose.position.z = estimator.Ps[WINDOW_SIZE].z();
@@ -159,7 +161,7 @@ void pubOdometry(const Estimator &estimator, const std_msgs::Header &header)
         relo_path.poses.push_back(pose_stamped);
         pub_relo_path.publish(relo_path);
 
-        // write result to file 输出到文件
+        // write result to file 输出到文件(这里应该是每两帧之间的relative pose，而不是相对于world系的Twb[i])
         ofstream foutC(VINS_RESULT_PATH, ios::app);
         foutC.setf(ios::fixed, ios::floatfield);
         foutC.precision(0);
@@ -394,7 +396,7 @@ void pubKeyframe(const Estimator &estimator)
             {
 
                 int imu_i = it_per_id.start_frame;
-                //归一化[x,y,1]转为camera下3D
+                //归一化[x,y,1]转为start_frame帧的camera下3D，再转为world系下3D
                 Vector3d pts_i = it_per_id.feature_per_frame[0].point * it_per_id.estimated_depth;
                 Vector3d w_pts_i = estimator.Rs[imu_i] * (estimator.ric[0] * pts_i + estimator.tic[0])
                                       + estimator.Ps[imu_i];
@@ -425,6 +427,7 @@ void pubRelocalization(const Estimator &estimator)
     nav_msgs::Odometry odometry;
     odometry.header.stamp = ros::Time(estimator.relo_frame_stamp);
     odometry.header.frame_id = "world";
+    //可能是Tj后_j前，加入到后端优化 前后存在relative pose，矫正一下更准
     odometry.pose.pose.position.x = estimator.relo_relative_t.x();
     odometry.pose.pose.position.y = estimator.relo_relative_t.y();
     odometry.pose.pose.position.z = estimator.relo_relative_t.z();
@@ -433,7 +436,7 @@ void pubRelocalization(const Estimator &estimator)
     odometry.pose.pose.orientation.z = estimator.relo_relative_q.z();
     odometry.pose.pose.orientation.w = estimator.relo_relative_q.w();
     odometry.twist.twist.linear.x = estimator.relo_relative_yaw;
-    odometry.twist.twist.linear.y = estimator.relo_frame_index;
+    odometry.twist.twist.linear.y = estimator.relo_frame_index;//j帧index
 
     pub_relo_relative_pose.publish(odometry);
 }

@@ -609,8 +609,8 @@ void TemplatedDatabase<TDescriptor, F>::query(
   QueryResults &ret, int max_results, int max_id) const
 {
   BowVector vec;
-  m_voc->transform(features, vec);
-  query(vec, ret, max_results, max_id);
+  m_voc->transform(features, vec);//转为BoW向量
+  query(vec, ret, max_results, max_id);//查询
 }
 
 // --------------------------------------------------------------------------

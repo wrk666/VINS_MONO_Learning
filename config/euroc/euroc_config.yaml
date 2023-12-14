@@ -66,7 +66,7 @@ g_norm: 9.81007     # gravity magnitude
 #loop closure parameters
 loop_closure: 1                    # start loop closure  1代表需要loop
 load_previous_pose_graph: 0        # load and reuse previous pose graph; load from 'pose_graph_save_path' 进行map reuse时使用，与之前的pose graph进行融合
-fast_relocalization: 0             # useful in real-time and large project
+fast_relocalization: 0             # useful in real-time and large project  是否开启快速重定位
 pose_graph_save_path: "/home/wrk/File/SLAM/My_course/VIO/Output/pose_graph/" # save and load path
 
 #unsynchronization parameters

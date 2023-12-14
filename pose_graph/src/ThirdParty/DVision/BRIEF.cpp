@@ -57,6 +57,7 @@ void BRIEF::compute(const cv::Mat &image,
       aux = image;
     }
 
+    //高斯模糊
     cv::GaussianBlur(aux, im, ksize, sigma, sigma);
     
   }

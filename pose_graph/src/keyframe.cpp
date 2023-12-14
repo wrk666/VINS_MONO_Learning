@@ -21,7 +21,7 @@ KeyFrame::KeyFrame(double _time_stamp, int _index, Vector3d &_vio_T_w_i, Matrix3
 	vio_R_w_i = _vio_R_w_i;
 	T_w_i = vio_T_w_i;
 	R_w_i = vio_R_w_i;
-	origin_vio_T = vio_T_w_i;		
+	origin_vio_T = vio_T_w_i;   //estimator pub的原始Twi
 	origin_vio_R = vio_R_w_i;
 	image = _image.clone();
 	cv::resize(image, thumbnail, cv::Size(80, 60));
@@ -34,8 +34,8 @@ KeyFrame::KeyFrame(double _time_stamp, int _index, Vector3d &_vio_T_w_i, Matrix3
 	has_fast_point = false;
 	loop_info << 0, 0, 0, 0, 0, 0, 0, 0;
 	sequence = _sequence;
-	computeWindowBRIEFPoint();
-	computeBRIEFPoint();
+	computeWindowBRIEFPoint();//计算窗口中所有特征点的描述子
+	computeBRIEFPoint();//对新KF再重新检出500个FAST角点，并计算所有特征点的描述子，用于loop detection
 	if(!DEBUG_IMAGE)
 		image.release();
 }
@@ -71,7 +71,7 @@ KeyFrame::KeyFrame(double _time_stamp, int _index, Vector3d &_vio_T_w_i, Matrix3
 	brief_descriptors = _brief_descriptors;
 }
 
-
+//计算窗口中所有特征点的描述子
 void KeyFrame::computeWindowBRIEFPoint()
 {
 	BriefExtractor extractor(BRIEF_PATTERN_FILE.c_str());
@@ -84,15 +84,17 @@ void KeyFrame::computeWindowBRIEFPoint()
 	extractor(image, window_keypoints, window_brief_descriptors);
 }
 
-//对新KF再重新检出500个FAST角点，用于loop closure
+//对新KF再重新检出500个FAST角点，并计算所有特征点的描述子，用于loop detection
 void KeyFrame::computeBRIEFPoint()
 {
 	BriefExtractor extractor(BRIEF_PATTERN_FILE.c_str());
 	const int fast_th = 20; // corner detector response threshold
+	//FAST角点
 	if(1)
-		cv::FAST(image, keypoints, fast_th, true);
+		cv::FAST(image, keypoints, fast_th, true);//非极大值抑制
 	else
 	{
+	    //harris角点
 		vector<cv::Point2f> tmp_pts;
 		cv::goodFeaturesToTrack(image, tmp_pts, 500, 0.01, 10);
 		for(int i = 0; i < (int)tmp_pts.size(); i++)
@@ -102,10 +104,12 @@ void KeyFrame::computeBRIEFPoint()
 		    keypoints.push_back(key);
 		}
 	}
+	//使用重载的()运算符
 	extractor(image, keypoints, brief_descriptors);
 	for (int i = 0; i < (int)keypoints.size(); i++)
 	{
 		Eigen::Vector3d tmp_p;
+		//直接输出拟合畸变后的归一化坐标
 		m_camera->liftProjective(Eigen::Vector2d(keypoints[i].pt.x, keypoints[i].pt.y), tmp_p);
 		cv::KeyPoint tmp_norm;
 		tmp_norm.pt = cv::Point2f(tmp_p.x()/tmp_p.z(), tmp_p.y()/tmp_p.z());
@@ -118,7 +122,7 @@ void BriefExtractor::operator() (const cv::Mat &im, vector<cv::KeyPoint> &keys, 
   m_brief.compute(im, keys, descriptors);
 }
 
-
+//对关键帧中每个特征点的描述子与回环帧的所有描述子匹配，如果能找到汉明距离小于80的最小值和索引即为该特征点的最佳匹配，相应的status置为1
 bool KeyFrame::searchInAera(const BRIEF::bitset window_descriptor,
                             const std::vector<BRIEF::bitset> &descriptors_old,
                             const std::vector<cv::KeyPoint> &keypoints_old,
@@ -140,6 +144,7 @@ bool KeyFrame::searchInAera(const BRIEF::bitset window_descriptor,
         }
     }
     //printf("best dist %d", bestDist);
+    //找到汉明距离小于80的最小值和索引即为该特征点的最佳匹配
     if (bestIndex != -1 && bestDist < 80)
     {
       best_match = keypoints_old[bestIndex].pt;
@@ -150,6 +155,16 @@ bool KeyFrame::searchInAera(const BRIEF::bitset window_descriptor,
       return false;
 }
 
+/**
+ * @brief   将关键帧与回环帧进行BRIEF描述子匹配
+ * @param[out]  matched_2d_old  	匹配帧匹配上回环帧的二维坐标
+ * @param[out]  matched_2d_old_norm 匹配帧匹配上回环帧的二维归一化坐标
+ * @param[out]  status				匹配状态，成功为1
+ * @param[in]   descriptors_old		回环帧的描述子
+ * @param[in] 	keypoints_old 		回环帧的二维坐标
+ * @param[in] 	keypoints_old_norm	回环帧的二维归一化坐标
+ * @return      void
+*/
 void KeyFrame::searchByBRIEFDes(std::vector<cv::Point2f> &matched_2d_old,
 								std::vector<cv::Point2f> &matched_2d_old_norm,
                                 std::vector<uchar> &status,
@@ -161,6 +176,7 @@ void KeyFrame::searchByBRIEFDes(std::vector<cv::Point2f> &matched_2d_old,
     {
         cv::Point2f pt(0.f, 0.f);
         cv::Point2f pt_norm(0.f, 0.f);
+        //对关键帧中每个特征点的描述子与回环帧的所有描述子匹配，如果能找到汉明距离小于80的最小值和索引即为该特征点的最佳匹配，相应的status置为1
         if (searchInAera(window_brief_descriptors[i], descriptors_old, keypoints_old, keypoints_old_norm, pt, pt_norm))
           status.push_back(1);
         else
@@ -210,9 +226,10 @@ void KeyFrame::PnPRANSAC(const vector<cv::Point2f> &matched_2d_old_norm,
     cv::Mat K = (cv::Mat_<double>(3, 3) << 1.0, 0, 0, 0, 1.0, 0, 0, 0, 1.0);
     Matrix3d R_inital;
     Vector3d P_inital;
-    Matrix3d R_w_c = origin_vio_R * qic;
+    Matrix3d R_w_c = origin_vio_R * qic;//原始Twc(这里应该是指已经drift了的w2，因为要relo，所以才是w2)
     Vector3d T_w_c = origin_vio_T + origin_vio_R * tic;
 
+    //Tcw
     R_inital = R_w_c.inverse();
     P_inital = -(R_inital * T_w_c);
 
@@ -223,6 +240,7 @@ void KeyFrame::PnPRANSAC(const vector<cv::Point2f> &matched_2d_old_norm,
     cv::Mat inliers;
     TicToc t_pnp_ransac;
 
+    //CV不同版本的PnP
     if (CV_MAJOR_VERSION < 3)
         solvePnPRansac(matched_3d, matched_2d_old_norm, K, D, rvec, t, true, 100, 10.0 / 460.0, 100, inliers);
     else
@@ -245,12 +263,13 @@ void KeyFrame::PnPRANSAC(const vector<cv::Point2f> &matched_2d_old_norm,
 
     cv::Rodrigues(rvec, r);
     Matrix3d R_pnp, R_w_c_old;
-    cv::cv2eigen(r, R_pnp);
-    R_w_c_old = R_pnp.transpose();
+    cv::cv2eigen(r, R_pnp);//Rci_w
+    R_w_c_old = R_pnp.transpose();//Rw_ci
     Vector3d T_pnp, T_w_c_old;
     cv::cv2eigen(t, T_pnp);
-    T_w_c_old = R_w_c_old * (-T_pnp);
+    T_w_c_old = R_w_c_old * (-T_pnp);//tw_ci
 
+    //Tw_bi = Tw_ci * tic^(-1)
     PnP_R_old = R_w_c_old * qic.transpose();
     PnP_T_old = T_w_c_old - PnP_R_old * tic;
 
@@ -262,14 +281,16 @@ bool KeyFrame::findConnection(KeyFrame* old_kf)
 	TicToc tmp_t;
 	//printf("find Connection\n");
 	vector<cv::Point2f> matched_2d_cur, matched_2d_old;
+    //matched_2d_old_norm：用cur帧window_brief_descriptors匹配old的brief_descriptors，在old中的2d
 	vector<cv::Point2f> matched_2d_cur_norm, matched_2d_old_norm;
 	vector<cv::Point3f> matched_3d;
 	vector<double> matched_id;
 	vector<uchar> status;
 
-	matched_3d = point_3d;
-	matched_2d_cur = point_2d_uv;
-	matched_2d_cur_norm = point_2d_norm;
+	//均为this KeyFrame的类成员
+	matched_3d = point_3d;//j帧的3d
+	matched_2d_cur = point_2d_uv;//2d观测
+	matched_2d_cur_norm = point_2d_norm;//归一化平面xy坐标
 	matched_id = point_id;
 
 	TicToc t_match;
@@ -299,7 +320,9 @@ bool KeyFrame::findConnection(KeyFrame* old_kf)
 	    }
 	#endif
 	//printf("search by des\n");
+    //关键帧WINDOW内的描述子与回环帧的描述子(brief_descriptors，不知道后面有没有把WINDOW内的描述子合并到这里面来)进行BRIEF描述子匹配，剔除匹配失败的点
 	searchByBRIEFDes(matched_2d_old, matched_2d_old_norm, status, old_kf->brief_descriptors, old_kf->keypoints, old_kf->keypoints_norm);
+    //剔除匹配失败的点
 	reduceVector(matched_2d_cur, status);
 	reduceVector(matched_2d_old, status);
 	reduceVector(matched_2d_cur_norm, status);
@@ -404,6 +427,8 @@ bool KeyFrame::findConnection(KeyFrame* old_kf)
 	Eigen::Vector3d relative_t;
 	Quaterniond relative_q;
 	double relative_yaw;
+	//如果能匹配的特征点能达到最小回环匹配个数，则用RANSAC PnP检测再去除误匹配的点，求出的是(PnP_T_old, PnP_R_old)=Tw2_bi
+	//TODO:为什么用新帧的3D，老帧的2D？
 	if ((int)matched_2d_cur.size() > MIN_LOOP_NUM)
 	{
 		status.clear();
@@ -470,10 +495,12 @@ bool KeyFrame::findConnection(KeyFrame* old_kf)
 	    #endif
 	}
 
+	//Tbi_bj=Tw2_bi^(-1) * Tw2_bj
 	if ((int)matched_2d_cur.size() > MIN_LOOP_NUM)
 	{
 	    relative_t = PnP_R_old.transpose() * (origin_vio_T - PnP_T_old);
 	    relative_q = PnP_R_old.transpose() * origin_vio_R;
+	    //Rbi_bj.yaw
 	    relative_yaw = Utility::normalizeAngle(Utility::R2ypr(origin_vio_R).x() - Utility::R2ypr(PnP_R_old).x());
 	    //printf("PNP relative\n");
 	    //cout << "pnp relative_t " << relative_t.transpose() << endl;
@@ -483,22 +510,27 @@ bool KeyFrame::findConnection(KeyFrame* old_kf)
 
 	    	has_loop = true;
 	    	loop_index = old_kf->index;
+	    	//更新loop_info  Tbi_bj，后面要用
 	    	loop_info << relative_t.x(), relative_t.y(), relative_t.z(),
 	    	             relative_q.w(), relative_q.x(), relative_q.y(), relative_q.z(),
 	    	             relative_yaw;
+            //快速重定位:组装msg，发送match_points topic，estimator接收到该消息后进行快速重定位
 	    	if(FAST_RELOCALIZATION)
 	    	{
 			    sensor_msgs::PointCloud msg_match_points;//特征点之间的匹配
+                //这个是cur帧的时间戳，estimator靠该时间戳在WINDOW中找到需要重定位的帧，通过该时间戳和old_frame的index来将old与cur建立联系
 			    msg_match_points.header.stamp = ros::Time(time_stamp);
+			    //msg的point是归一化的xy和landmark的id
 			    for (int i = 0; i < (int)matched_2d_old_norm.size(); i++)
 			    {
 		            geometry_msgs::Point32 p;
-		            p.x = matched_2d_old_norm[i].x;
+		            p.x = matched_2d_old_norm[i].x;//i帧的归一化xy
 		            p.y = matched_2d_old_norm[i].y;
 		            p.z = matched_id[i];
 		            msg_match_points.points.push_back(p);
 			    }
-			    Eigen::Vector3d T = old_kf->T_w_i; 
+                //Tw_bi
+			    Eigen::Vector3d T = old_kf->T_w_i;
 			    Eigen::Matrix3d R = old_kf->R_w_i;
 			    Quaterniond Q(R);
 			    sensor_msgs::ChannelFloat32 t_q_index;//这个channel如何理解？一个channel是一个通道，这里代表的是一个量就是两帧间的T

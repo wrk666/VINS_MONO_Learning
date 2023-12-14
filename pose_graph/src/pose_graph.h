@@ -62,7 +62,7 @@ private:
 	void addKeyFrameIntoVoc(KeyFrame* keyframe);
 	void optimize4DoF();
 	void updatePath();
-	list<KeyFrame*> keyframelist;//KF
+	list<KeyFrame*> keyframelist;//所有KF
 	std::mutex m_keyframelist;//一些互斥锁
 	std::mutex m_optimize_buf;
 	std::mutex m_path;
