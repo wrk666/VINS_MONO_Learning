@@ -428,12 +428,11 @@ bool KeyFrame::findConnection(KeyFrame* old_kf)
 	Quaterniond relative_q;
 	double relative_yaw;
 	//如果能匹配的特征点能达到最小回环匹配个数，则用RANSAC PnP检测再去除误匹配的点，求出的是(PnP_T_old, PnP_R_old)=Tw2_bi
-	//TODO:为什么用新帧的3D，老帧的2D？
 	if ((int)matched_2d_cur.size() > MIN_LOOP_NUM)
 	{
 		status.clear();
 	    PnPRANSAC(matched_2d_old_norm, matched_3d, status, PnP_T_old, PnP_R_old);
-	    reduceVector(matched_2d_cur, status);
+	    reduceVector(matched_2d_cur, status);//根据status去除outlier
 	    reduceVector(matched_2d_old, status);
 	    reduceVector(matched_2d_cur_norm, status);
 	    reduceVector(matched_2d_old_norm, status);
@@ -446,9 +445,19 @@ bool KeyFrame::findConnection(KeyFrame* old_kf)
 	        	cv::Mat gap_image(ROW, gap, CV_8UC1, cv::Scalar(255, 255, 255));
 	            cv::Mat gray_img, loop_match_img;
 	            cv::Mat old_img = old_kf->image;
+                /*void cv::hconcat	(	水平串联两个图像
+                 *	InputArray 	src1,	第一个输入矩阵
+                 *	InputArray 	src2,	第二个输入矩阵
+                 *	OutputArray dst 	输出矩阵，行数与前两个矩阵相同，列数为他们的总和
+                 *	)
+                */
+                //这里将image、gap_image、old_img水平拼接起来成为gray_img
 	            cv::hconcat(image, gap_image, gap_image);
 	            cv::hconcat(gap_image, old_img, gray_img);
+                //灰度图gray_img转换成RGB图loop_match_img
 	            cvtColor(gray_img, loop_match_img, CV_GRAY2RGB);
+
+                //在图片loop_match_img上标注出匹配点和之间的连线
 	            for(int i = 0; i< (int)matched_2d_cur.size(); i++)
 	            {
 	                cv::Point2f cur_pt = matched_2d_cur[i];
@@ -466,6 +475,8 @@ bool KeyFrame::findConnection(KeyFrame* old_kf)
 	                old_pt.x += (COL + gap) ;
 	                cv::line(loop_match_img, matched_2d_cur[i], old_pt, cv::Scalar(0, 255, 0), 2, 8, 0);
 	            }
+
+                //在loop_match_img下面垂直拼接一个notation，写上当前帧和先前帧的索引值和序列号
 	            cv::Mat notation(50, COL + gap + COL, CV_8UC3, cv::Scalar(255, 255, 255));
 	            putText(notation, "current frame: " + to_string(index) + "  sequence: " + to_string(sequence), cv::Point2f(20, 30), CV_FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(255), 3);
 
@@ -479,6 +490,7 @@ bool KeyFrame::findConnection(KeyFrame* old_kf)
 	                    << old_kf->index << "-" << "3pnp_match.jpg";
 	            cv::imwrite( path.str().c_str(), loop_match_img);
 	            */
+                //若达到最小回环匹配点数，将loop_match_img的宽和高缩小一半并发布为pub_match_img
 	            if ((int)matched_2d_cur.size() > MIN_LOOP_NUM)
 	            {
 	            	/*
@@ -495,9 +507,10 @@ bool KeyFrame::findConnection(KeyFrame* old_kf)
 	    #endif
 	}
 
-	//Tbi_bj=Tw2_bi^(-1) * Tw2_bj
+    //相对位姿检验
 	if ((int)matched_2d_cur.size() > MIN_LOOP_NUM)
 	{
+        //Tbi_bj=Tw2_bi^(-1) * Tw2_bj
 	    relative_t = PnP_R_old.transpose() * (origin_vio_T - PnP_T_old);
 	    relative_q = PnP_R_old.transpose() * origin_vio_R;
 	    //Rbi_bj.yaw
@@ -510,7 +523,7 @@ bool KeyFrame::findConnection(KeyFrame* old_kf)
 
 	    	has_loop = true;
 	    	loop_index = old_kf->index;
-	    	//更新loop_info  Tbi_bj，后面要用
+	    	//更新this KFde loop_info  Tbi_bj，后面要用
 	    	loop_info << relative_t.x(), relative_t.y(), relative_t.z(),
 	    	             relative_q.w(), relative_q.x(), relative_q.y(), relative_q.z(),
 	    	             relative_yaw;
@@ -529,7 +542,7 @@ bool KeyFrame::findConnection(KeyFrame* old_kf)
 		            p.z = matched_id[i];
 		            msg_match_points.points.push_back(p);
 			    }
-                //Tw_bi
+                //Tw1_bi
 			    Eigen::Vector3d T = old_kf->T_w_i;
 			    Eigen::Matrix3d R = old_kf->R_w_i;
 			    Quaterniond Q(R);
@@ -541,7 +554,7 @@ bool KeyFrame::findConnection(KeyFrame* old_kf)
 			    t_q_index.values.push_back(Q.x());
 			    t_q_index.values.push_back(Q.y());
 			    t_q_index.values.push_back(Q.z());
-			    t_q_index.values.push_back(index);
+			    t_q_index.values.push_back(index);//[7] cur帧的index
 			    msg_match_points.channels.push_back(t_q_index);
 			    pub_match_points.publish(msg_match_points);
 	    	}

@@ -78,7 +78,7 @@ public:
 
 	double time_stamp; 
 	int index;  //索引,用于查询KF
-	int local_index;
+	int local_index;//
 	Eigen::Vector3d vio_T_w_i; 
 	Eigen::Matrix3d vio_R_w_i; 
 	Eigen::Vector3d T_w_i;
@@ -97,7 +97,7 @@ public:
 	vector<BRIEF::bitset> brief_descriptors;
 	vector<BRIEF::bitset> window_brief_descriptors;
 	bool has_fast_point;
-	int sequence;
+	int sequence;//这到底啥意思？
 
 	bool has_loop;
 	int loop_index;//i帧index

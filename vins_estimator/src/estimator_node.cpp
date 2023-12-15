@@ -331,7 +331,7 @@ void process()
                     u_v_id.z() = relo_msg->points[i].z;//feature id
                     match_points.push_back(u_v_id);
                 }
-                //Tw_bi（i就是old帧，理解为loop frame v）
+                //Tw1_bi（i就是old帧，理解为loop frame v）
                 Vector3d relo_t(relo_msg->channels[0].values[0], relo_msg->channels[0].values[1], relo_msg->channels[0].values[2]);
                 Quaterniond relo_q(relo_msg->channels[0].values[3], relo_msg->channels[0].values[4], relo_msg->channels[0].values[5], relo_msg->channels[0].values[6]);
                 Matrix3d relo_r = relo_q.toRotationMatrix();

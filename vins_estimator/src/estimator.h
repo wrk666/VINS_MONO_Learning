@@ -134,9 +134,9 @@ class Estimator
     double relo_Pose[SIZE_POSE];//WINDOW内与old帧loop上的j帧的pose Twj
     Matrix3d drift_correct_r;
     Vector3d drift_correct_t;
-    Vector3d prev_relo_t;//old frame的Twi
+    Vector3d prev_relo_t;//old frame的Tw1_bi
     Matrix3d prev_relo_r;
-    Vector3d relo_relative_t;
+    Vector3d relo_relative_t;//
     Quaterniond relo_relative_q;
     double relo_relative_yaw;
 

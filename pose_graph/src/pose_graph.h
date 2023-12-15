@@ -49,6 +49,7 @@ public:
 	void savePoseGraph();
 	void loadPoseGraph();
 	void publish();
+	//loop i，j帧计算的Tw1_w2
 	Vector3d t_drift;
 	double yaw_drift;
 	Matrix3d r_drift;
@@ -96,10 +97,12 @@ T NormalizeAngle(const T& angle_degrees) {
   	return angle_degrees;
 };
 
+//是ceres::AutoDiffLocalParameterization的Functor参数，需要重载operator()
 class AngleLocalParameterization {
  public:
 
   template <typename T>
+  //重载()，进行弧度/角度运算，并归一化到[-360, 360]
   bool operator()(const T* theta_radians, const T* delta_theta_radians,
                   T* theta_radians_plus_delta) const {
     *theta_radians_plus_delta =
@@ -108,6 +111,7 @@ class AngleLocalParameterization {
     return true;
   }
 
+  //定义yaw角的更新方式  <functor_, >
   static ceres::LocalParameterization* Create() {
     return (new ceres::AutoDiffLocalParameterization<AngleLocalParameterization,
                                                      1, 1>);
@@ -117,7 +121,7 @@ class AngleLocalParameterization {
 template <typename T> 
 void YawPitchRollToRotationMatrix(const T yaw, const T pitch, const T roll, T R[9])
 {
-
+    //转为弧度
 	T y = yaw / T(180.0) * T(M_PI);
 	T p = pitch / T(180.0) * T(M_PI);
 	T r = roll / T(180.0) * T(M_PI);
@@ -156,6 +160,7 @@ void RotationMatrixRotatePoint(const T R[9], const T t[3], T r_t[3])
 	r_t[2] = R[6] * t[0] + R[7] * t[1] + R[8] * t[2];
 };
 
+//4DoF pose graph的factor，
 struct FourDOFError
 {
 	FourDOFError(double t_x, double t_y, double t_z, double relative_yaw, double pitch_i, double roll_i)
@@ -187,9 +192,11 @@ struct FourDOFError
 		return true;
 	}
 
+	//4为residual，输入参数分别为1(yaw_i)，3(tw2_i)，1(yaw_j)，3(tw2_j)，注意这里的w在优化前是w2，在优化后由于保持了全局一致性，就变为w1
 	static ceres::CostFunction* Create(const double t_x, const double t_y, const double t_z,
 									   const double relative_yaw, const double pitch_i, const double roll_i) 
 	{
+      //分别是sequential和loop边的yaw(1)和t(3)的residual
 	  return (new ceres::AutoDiffCostFunction<
 	          FourDOFError, 4, 1, 3, 1, 3>(
 	          	new FourDOFError(t_x, t_y, t_z, relative_yaw, pitch_i, roll_i)));
@@ -202,11 +209,13 @@ struct FourDOFError
 
 struct FourDOFWeightError
 {
+    //构造，weight=1，yaw的weight sacle为1/10
 	FourDOFWeightError(double t_x, double t_y, double t_z, double relative_yaw, double pitch_i, double roll_i)
 				  :t_x(t_x), t_y(t_y), t_z(t_z), relative_yaw(relative_yaw), pitch_i(pitch_i), roll_i(roll_i){
 				  	weight = 1;
 				  }
 
+    //auto diff需要重载()来定义residual的计算方法
 	template <typename T>
 	bool operator()(const T* const yaw_i, const T* ti, const T* yaw_j, const T* tj, T* residuals) const
 	{
@@ -215,16 +224,18 @@ struct FourDOFWeightError
 		t_w_ij[1] = tj[1] - ti[1];
 		t_w_ij[2] = tj[2] - ti[2];
 
-		// euler to rotation
+		// euler to rotation 欧拉角转旋转矩阵，[out]w_R_i
 		T w_R_i[9];
 		YawPitchRollToRotationMatrix(yaw_i[0], T(pitch_i), T(roll_i), w_R_i);
-		// rotation transpose
+		// rotation transpose 旋转矩阵转置 [out]i_R_w
 		T i_R_w[9];
 		RotationMatrixTranspose(w_R_i, i_R_w);
-		// rotation matrix rotate point
+		// rotation matrix rotate point  (w)ti_j转到(i)ti_j
 		T t_i_ij[3];
 		RotationMatrixRotatePoint(i_R_w, t_w_ij, t_i_ij);
 
+        // t_x,t_y和t_z都是测量值
+        // residuals前三项表示平移项残差，第四项表示旋转项yaw角的残差，注意这里yaw角的残差缩小了10倍(目的是避免优化过程中对yaw角的调整过大)
 		residuals[0] = (t_i_ij[0] - T(t_x)) * T(weight);
 		residuals[1] = (t_i_ij[1] - T(t_y)) * T(weight);
 		residuals[2] = (t_i_ij[2] - T(t_z)) * T(weight);
@@ -233,6 +244,7 @@ struct FourDOFWeightError
 		return true;
 	}
 
+	//自动求导
 	static ceres::CostFunction* Create(const double t_x, const double t_y, const double t_z,
 									   const double relative_yaw, const double pitch_i, const double roll_i) 
 	{

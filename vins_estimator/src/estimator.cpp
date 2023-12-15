@@ -702,30 +702,40 @@ void Estimator::double2vector()
 
     // relative info between two loop frame
     if(relocalization_info)
-    { 
-        Matrix3d relo_r;
+    {
+        //按照WINDOW内第一帧的yaw角变化对j帧进行矫正
+        Matrix3d relo_r;//j帧矫正之后的T
         Vector3d relo_t;
         relo_r = rot_diff * Quaterniond(relo_Pose[6], relo_Pose[3], relo_Pose[4], relo_Pose[5]).normalized().toRotationMatrix();
         relo_t = rot_diff * Vector3d(relo_Pose[0] - para_Pose[0][0],
                                      relo_Pose[1] - para_Pose[0][1],
                                      relo_Pose[2] - para_Pose[0][2]) + origin_P0;//保证第[0]帧不变之后，+origin_P0转为世界系下的t
-        //优化前后loop closure frame v 的drift T_prev_now
+
+        //由于pitch和roll是可观的，所以我们在BA中一直都在优化pitch和roll，但由于yaw不可观，
+        //所以即使漂了，可能还是满足我们BA的最优解，所以需要手动进行矫正
+        //prev_relo_r=Tw1_bi, relo_Pose=Tw2_bi，这两个pose间的yaw和t的漂移Rw1_w2,tw1_w2
         double drift_correct_yaw;
-        //loop closure frame优化前后的yaw drift, prev-now = (R_prev_now).yaw
+        //yaw drift, Rw1_bi.yaw() - Rw2_bi.yaw=Rw1_w2.yaw()
         drift_correct_yaw = Utility::R2ypr(prev_relo_r).x() - Utility::R2ypr(relo_r).x();
-        //r变化R_prev_now
         drift_correct_r = Utility::ypr2R(Vector3d(drift_correct_yaw, 0, 0));
-        //t变化t_now_prev = w_t_prev - Rprev_now * w_t_now
+        //tw1_w2
         drift_correct_t = prev_relo_t - drift_correct_r * relo_t;
 
-        //loop closure frame v与relo frame local(窗口内的local loop帧)的relative pose：T_v_local(Tij,j>i)，可能用于快速重定位
-        //Rw_v^(-1)*( (w)tw_local - (w)t_w_v ) = R_v_w * (w)t_v_local = (v)t_v_local（表示Tv_local的平移部分，向量指向是从v指向local）
+
+        //Tw2_bi^(-1) * Tw2_bj = Tbi_bj
         relo_relative_t = relo_r.transpose() * (Ps[relo_frame_local_index] - relo_t);
-        //Rw_v^(-1)* Rw_local = Rv_local  TODO:这里可能需要考虑world系不一样的问题，但是如果要考虑world系不一样的话，这里就不能用world系相消了，只能用PnP才能求relative pose。所以可能还是按我之前的那样理解
-        //TODO：12.14看了pose_graph之后的思考 这可能是 Rw2_j^(-1)后 * Rw_2_j前 = Rj后_j前
         relo_relative_q = relo_r.transpose() * Rs[relo_frame_local_index];
-        //(R_local_v).yaw
+        //Rw2_bj.yaw() - Rw2_bi.yaw() = Rbi_bj.yaw()
         relo_relative_yaw = Utility::normalizeAngle(Utility::R2ypr(Rs[relo_frame_local_index]).x() - Utility::R2ypr(relo_r).x());
+
+
+/*        //验证Tw1w2是否正确。  结果不一样，不知道为啥。
+        //1.计算Rw1_w2 = Rw1_bi * Rw2_bi^(-1)
+        Matrix3d Rw1_w2 = prev_relo_r * relo_r;
+        //2. 计算Tw1_w2中的Rw1_w2 = Tw1_bi.R * Tbi_bj.R * Rw2_bj^(-1)
+        Matrix3d Rw1_w2_prime = prev_relo_r * relo_relative_q.toRotationMatrix() * Rs[relo_frame_local_index].transpose();
+        ROS_DEBUG_STREAM("\ncheck Rw1_w2:\n" << Rw1_w2 << "\nRw1_w2_prime:\n" << Rw1_w2_prime);*/
+
         //cout << "vins relo " << endl;
         //cout << "vins relative_t " << relo_relative_t.transpose() << endl;
         //cout << "vins relative_yaw " <<relo_relative_yaw << endl;
@@ -909,7 +919,7 @@ void Estimator::optimization()
     ROS_DEBUG("prepare for ceres: %f", t_prepare.toc());
 
     //4.添加闭环检测残差，计算滑动窗口中与每一个闭环关键帧的相对位姿，这个相对位置是为后面的图优化(pose graph)准备 或者是 快速重定位(崔华坤PDF7.2节)
-    //这里并未固定i帧pose(relo_Pose)，只是对其进行了refine，使其更准
+    //这里注意relo_pose是Tw2_bi = Tw2_w1 * Tw1_bi
     if(relocalization_info)
     {
         //printf("set relocalization factor! \n");
@@ -924,7 +934,7 @@ void Estimator::optimization()
                 continue;
             ++feature_index;
             int start = it_per_id.start_frame;
-            if(start <= relo_frame_local_index)//必须之前看到过,relo_frame_local_index对应的pose是relo_pose=Twj
+            if(start <= relo_frame_local_index)//必须之前看到过
             {
                 //1.先在i中match的点中找到可能是现在这个feature的id的index
                 while((int)match_points[retrive_feature_index].z() < it_per_id.feature_id)//.z()存的是i，j两帧match上的feature的id
@@ -934,11 +944,12 @@ void Estimator::optimization()
                 //2.如果是，则WINDOW内的it_per_id.feature_id这个id的landmark就是被loop上的landmark,取归一化坐标，
                 if((int)match_points[retrive_feature_index].z() == it_per_id.feature_id)
                 {
+                    //pts_j是i帧的归一化平面上的点，这里理解relo_Pose及其重要，relo_Pose实际上是Tw2_bi，视觉重投影是从WINDOW内的start帧的camera(在w2系下)，投影到i帧(在w1系下)，耦合了Tw1_w2
                     Vector3d pts_j = Vector3d(match_points[retrive_feature_index].x(), match_points[retrive_feature_index].y(), 1.0);
                     Vector3d pts_i = it_per_id.feature_per_frame[0].point;//start中的点
                     
                     ProjectionFactor *f = new ProjectionFactor(pts_i, pts_j);
-                    //relo_Pose是Twj  para_Pose[start], 称为Tw_s,则这个residualblock的residual对应的T是Tsj:Tws*Tsj=Twj
+                    //relo_Pose是Tw2_bi
                     problem.AddResidualBlock(f, loss_function, para_Pose[start], relo_Pose, para_Ex_Pose[0], para_Feature[feature_index]);
                     retrive_feature_index++;
                 }     
@@ -1343,16 +1354,17 @@ void Estimator::setReloFrame(double _frame_stamp, int _frame_index, vector<Vecto
     match_points.clear();
     match_points = _match_points;//i帧中与j帧中match上的点在i帧中的归一化(x,y,id)
     //Tw2_bi=Tw_b_old
-    prev_relo_t = _relo_t;
+    prev_relo_t = _relo_t;//i帧pose
     prev_relo_r = _relo_r;
     for(int i = 0; i < WINDOW_SIZE; i++)
     {
-        if(relo_frame_stamp == Headers[i].stamp.toSec())//
+        if(relo_frame_stamp == Headers[i].stamp.toSec())
         {
             relo_frame_local_index = i;//j帧在WINDOW中的下标
             relocalization_info = 1;
             for (int j = 0; j < SIZE_POSE; j++)
-                relo_Pose[j] = para_Pose[i][j];//将WINDOW内用于relo的pose赋值给relo_Pose
+                //将WINDOW内用于relo的pose赋值给relo_Pose，注意，这不是赋地址，而是new了一个新的优化变量的内存
+                relo_Pose[j] = para_Pose[i][j];
         }
     }
 }

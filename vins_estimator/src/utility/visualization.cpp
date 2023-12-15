@@ -139,11 +139,11 @@ void pubOdometry(const Estimator &estimator, const std_msgs::Header &header)
         path.poses.push_back(pose_stamped);
         pub_path.publish(path);
 
-        //重定位时计算出的被loop帧的现在与之前的drift，把现在的拉回到之前的上面去
+        //重定位时计算出的Tw1_w2，把现在的拉回到之前的上面去
         Vector3d correct_t;
         Vector3d correct_v;
         Quaterniond correct_q;
-        //Tdrift_correct_r = T_prev_now现在比之前的drift相对量，拉回去
+        //Tdrift_correct_r = T_w1_w2把world系的漂移拉回去
         correct_t = estimator.drift_correct_r * estimator.Ps[WINDOW_SIZE] + estimator.drift_correct_t;
         correct_q = estimator.drift_correct_r * estimator.Rs[WINDOW_SIZE];
         odometry.pose.pose.position.x = correct_t.x();
@@ -427,7 +427,7 @@ void pubRelocalization(const Estimator &estimator)
     nav_msgs::Odometry odometry;
     odometry.header.stamp = ros::Time(estimator.relo_frame_stamp);
     odometry.header.frame_id = "world";
-    //可能是Tj后_j前，加入到后端优化 前后存在relative pose，矫正一下更准
+    //Tbi_bj
     odometry.pose.pose.position.x = estimator.relo_relative_t.x();
     odometry.pose.pose.position.y = estimator.relo_relative_t.y();
     odometry.pose.pose.position.z = estimator.relo_relative_t.z();
@@ -435,7 +435,7 @@ void pubRelocalization(const Estimator &estimator)
     odometry.pose.pose.orientation.y = estimator.relo_relative_q.y();
     odometry.pose.pose.orientation.z = estimator.relo_relative_q.z();
     odometry.pose.pose.orientation.w = estimator.relo_relative_q.w();
-    odometry.twist.twist.linear.x = estimator.relo_relative_yaw;
+    odometry.twist.twist.linear.x = estimator.relo_relative_yaw;//Rbi_bj.yaw()
     odometry.twist.twist.linear.y = estimator.relo_frame_index;//j帧index
 
     pub_relo_relative_pose.publish(odometry);
