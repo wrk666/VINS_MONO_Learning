@@ -973,6 +973,7 @@ void Estimator::optimization()
         options.max_solver_time_in_seconds = SOLVER_TIME;
     TicToc t_solver;
     ceres::Solver::Summary summary;
+    //这里需要换成自己实现的solve，自己构建H矩阵并且自己实现LM算法，测试VINS-MONO的精度和ceres是否一样
     ceres::Solve(options, &problem, &summary);
     //cout << summary.BriefReport() << endl;
     ROS_DEBUG("Iterations : %d", static_cast<int>(summary.iterations.size()));
