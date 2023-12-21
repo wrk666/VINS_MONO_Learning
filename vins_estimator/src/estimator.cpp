@@ -1353,7 +1353,7 @@ void Estimator::setReloFrame(double _frame_stamp, int _frame_index, vector<Vecto
     relo_frame_index = _frame_index;//j帧的帧号
     match_points.clear();
     match_points = _match_points;//i帧中与j帧中match上的点在i帧中的归一化(x,y,id)
-    //Tw2_bi=Tw_b_old
+    //Tw1_bi=Tw1_b_old
     prev_relo_t = _relo_t;//i帧pose
     prev_relo_r = _relo_r;
     for(int i = 0; i < WINDOW_SIZE; i++)
@@ -1363,7 +1363,7 @@ void Estimator::setReloFrame(double _frame_stamp, int _frame_index, vector<Vecto
             relo_frame_local_index = i;//j帧在WINDOW中的下标
             relocalization_info = 1;
             for (int j = 0; j < SIZE_POSE; j++)
-                //将WINDOW内用于relo的pose赋值给relo_Pose，注意，这不是赋地址，而是new了一个新的优化变量的内存
+                //注意，这不是赋地址，而是new了一个新的优化变量的内存，relo_Pose虽然赋初值时为Tw2_bj，但是实际上作用是Tw2_bi
                 relo_Pose[j] = para_Pose[i][j];
         }
     }

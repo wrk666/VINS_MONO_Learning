@@ -53,7 +53,7 @@ public:
 	Vector3d t_drift;
 	double yaw_drift;
 	Matrix3d r_drift;
-	// world frame( base sequence or first sequence)<----> cur sequence frame  
+	// world frame( base sequence or first sequence)<----> cur sequence frame当前sequence到world系下的pose
 	Vector3d w_t_vio;
 	Matrix3d w_r_vio;
 

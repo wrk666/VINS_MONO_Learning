@@ -186,7 +186,6 @@ void imu_forward_callback(const nav_msgs::Odometry::ConstPtr &forward_msg)
 
 //estimator计算完Tbi_bj之后发送topic relo_relative_pose的msg的回调函数
 //重定位回调函数，将重定位帧的相对位姿放入loop_info，updateKeyFrameLoop()进行回环更新
-//TODO:后端优化完了发回来消息之后调用的，qt是T后_前
 void relo_relative_pose_callback(const nav_msgs::Odometry::ConstPtr &pose_msg)
 {
     //estimator计算的Tbi_bj

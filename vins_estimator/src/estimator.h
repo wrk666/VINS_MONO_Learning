@@ -131,7 +131,7 @@ class Estimator
     double relo_frame_index;//j帧index
     int relo_frame_local_index;
     vector<Vector3d> match_points;//(i帧归一化x，y，feature_id)
-    double relo_Pose[SIZE_POSE];//WINDOW内与old帧loop上的j帧的pose Twj
+    double relo_Pose[SIZE_POSE];//WINDOW内与old帧loop上的j帧的pose Tw2_bj
     Matrix3d drift_correct_r;
     Vector3d drift_correct_t;
     Vector3d prev_relo_t;//old frame的Tw1_bi

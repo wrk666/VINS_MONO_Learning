@@ -47,20 +47,20 @@ void PoseGraph::addKeyFrame(KeyFrame* cur_kf, bool flag_detect_loop)
     //shift to base frame
     Vector3d vio_P_cur;
     Matrix3d vio_R_cur;
-    //TODO：sequence数量？如果没建立那就新建一个，没建可能是不满足img_callback的条件
+    //如果图像序列号不满足则已经新建了一个sequence，则将Tw1_w2设为Identity()
     if (sequence_cnt != cur_kf->sequence)
     {
         sequence_cnt++;
         sequence_loop.push_back(0);
-        w_t_vio = Eigen::Vector3d(0, 0, 0);
+        w_t_vio = Eigen::Vector3d(0, 0, 0);//新序列的Tw1_w2置为Identity
         w_r_vio = Eigen::Matrix3d::Identity();
         m_drift.lock();
-        t_drift = Eigen::Vector3d(0, 0, 0);
+        t_drift = Eigen::Vector3d(0, 0, 0);//Tw1_w2
         r_drift = Eigen::Matrix3d::Identity();
         m_drift.unlock();
     }
 
-    //获得cur的Twi，并用shift更新
+    //获得cur的Twi，并用Tw1_w2更新
     cur_kf->getVioPose(vio_P_cur, vio_R_cur);
     vio_P_cur = w_r_vio * vio_P_cur + w_t_vio;
     vio_R_cur = w_r_vio *  vio_R_cur;
@@ -130,7 +130,7 @@ void PoseGraph::addKeyFrame(KeyFrame* cur_kf, bool flag_detect_loop)
                 list<KeyFrame*>::iterator it = keyframelist.begin();
                 for (; it != keyframelist.end(); it++)   
                 {
-                    //TODO：这sequence到底是啥意思？是说跟着loop上的帧后面还有一些帧，都需要relo回来吗？
+                    //按照序列号把同一序列的所有KF都拉到w1系下
                     if((*it)->sequence == cur_kf->sequence)
                     {
                         Vector3d vio_P_cur;
@@ -151,7 +151,7 @@ void PoseGraph::addKeyFrame(KeyFrame* cur_kf, bool flag_detect_loop)
         }
 	}
 
-	//上面是出现loop的情况，如果cur_kf没有loop帧，就用r_drift,t_drift代表的Tw1_w2来矫正(但是不知道是从哪更新的)
+	//上面是出现loop的情况，如果cur_kf没有loop帧，就用r_drift,t_drift代表的Tw1_w2来矫正(不是最新的，但是是比较新的Tw1w2)
 	//获取VIO当前帧的位姿P、R，根据偏移量计算得到实际位姿。并进行位姿更新
 	m_keyframelist.lock();
     Vector3d P;
@@ -330,7 +330,7 @@ KeyFrame* PoseGraph::getKeyFrame(int index)
 }
 
 //回环检测：计算当前帧与词袋的相似度分数， 并与关键帧数据库
-//中所有帧进行对比，并进行闭环一致性检测，获得闭环的候选帧
+//中所有帧进行对比(feature retrival)，并进行闭环一致性检测，获得闭环的候选帧
 int PoseGraph::detectLoop(KeyFrame* keyframe, int frame_index)
 {
     // put image into image_pool; for visualization
@@ -422,7 +422,7 @@ int PoseGraph::detectLoop(KeyFrame* keyframe, int frame_index)
 
 }
 
-//将当前帧的描述子存入字典数据库
+//将当前帧的描述子存入描述子数据库
 void PoseGraph::addKeyFrameIntoVoc(KeyFrame* keyframe)
 {
     // put image into image_pool; for visualization
@@ -559,7 +559,6 @@ void PoseGraph::optimize4DoF()
                     //注意，ceres里面构建的Rwi是由Create()中的euler_conncected.y(), euler_conncected.z()和AddResidualBlock中的euler_array[connected_index]构建的
                     ceres::CostFunction* cost_function = FourDOFWeightError::Create( relative_t.x(), relative_t.y(), relative_t.z(),
                                                                                relative_yaw, euler_conncected.y(), euler_conncected.z());
-                    //分别是loop边和序列边(sequential edge)
                     problem.AddResidualBlock(cost_function, loss_function, euler_array[connected_index], 
                                                                   t_array[connected_index], 
                                                                   euler_array[i], 
@@ -958,7 +957,7 @@ void PoseGraph::publish()
 //          loop_info: Tbi_bj相关
 void PoseGraph::updateKeyFrameLoop(int index, Eigen::Matrix<double, 8, 1 > &_loop_info)
 {
-    KeyFrame* kf = getKeyFrame(index);
+    KeyFrame* kf = getKeyFrame(index);//j帧
     kf->updateLoop(_loop_info);
     if (abs(_loop_info(7)) < 30.0 && Vector3d(_loop_info(0), _loop_info(1), _loop_info(2)).norm() < 20.0)
     {
