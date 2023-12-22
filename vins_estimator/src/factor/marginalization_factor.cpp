@@ -10,11 +10,11 @@ void ResidualBlockInfo::Evaluate()
     //无td时             12                           4                                  4
     std::vector<int> block_sizes = cost_function->parameter_block_sizes();
 
-//    ROS_DEBUG_STREAM("\ncost_function->num_residuals(): " << cost_function->num_residuals() <<
-//                          "\ncost_function->parameter_block_sizes().size: " << cost_function->parameter_block_sizes().size());
-//    for(int i=0; i<cost_function->parameter_block_sizes().size(); ++i) {
-//        ROS_DEBUG("\nparameter_block_sizes()[%d]: %d", i, cost_function->parameter_block_sizes()[i]);
-//    }
+/*    ROS_DEBUG_STREAM("\ncost_function->num_residuals(): " << cost_function->num_residuals() <<
+                          "\ncost_function->parameter_block_sizes().size: " << cost_function->parameter_block_sizes().size());
+    for(int i=0; i<cost_function->parameter_block_sizes().size(); ++i) {
+        ROS_DEBUG("\nparameter_block_sizes()[%d]: %d", i, cost_function->parameter_block_sizes()[i]);
+    }*/
     raw_jacobians = new double *[block_sizes.size()];//二重指针，指针数组
     jacobians.resize(block_sizes.size());
 
@@ -132,9 +132,10 @@ void MarginalizationInfo::preMarginalize()
 {
 //    ROS_INFO_STREAM("\nfactors.size(): " << factors.size());
     int i=0;
+    ROS_DEBUG("factors size=%lu, landmark size=%lu", factors.size(), factors.size()-2); //始于[0]帧的landmark
     for (auto it : factors)
     {
-//        ROS_INFO_STREAM("\nin preMarginalize i: "<< ++i);  //很大，能到900多，说明[0]观测到了很多landmark
+        ROS_INFO_STREAM("\nin preMarginalize i: "<< ++i);  //很大，能到900多，说明[0]观测到了很多landmark
         it->Evaluate();//计算每个factor的residual和Jacobian
         std::vector<int> block_sizes = it->cost_function->parameter_block_sizes(); //residual总维度，先验=last n=76，IMU=15，Visual=2
         for (int i = 0; i < static_cast<int>(block_sizes.size()); i++)
@@ -168,17 +169,17 @@ void* ThreadsConstructA(void* threadsstruct)
 {
     ThreadsStruct* p = ((ThreadsStruct*)threadsstruct);
 
-    //遍历该线程分配的所有factors，所有观测项
+    //遍历该线程分配的所有factors，这factor可能是任何一个factor
     for (auto it : p->sub_factors)
     {
-        //遍历该factor中的所有参数块P0，V0等
+        //遍历该factor中的所有参数块,比如IMU factor传入的是vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1]}
         for (int i = 0; i < static_cast<int>(it->parameter_blocks.size()); i++)
         {
             int idx_i = p->parameter_block_idx[reinterpret_cast<long>(it->parameter_blocks[i])];
             int size_i = p->parameter_block_size[reinterpret_cast<long>(it->parameter_blocks[i])];
             if (size_i == 7) //对于pose来说，是7维的,最后一维为0，这里取左边6
                 size_i = 6;
-            //只提取local size部分，对于pose来说，是7维的,最后一维为0，这里取左边6维
+            //只提取local size部分，对于pose来说，是7维的,最后一维为0，这里取左边6维;对于其他待优化变量，size_i不变，取全部jacobian
             Eigen::MatrixXd jacobian_i = it->jacobians[i].leftCols(size_i);
             for (int j = i; j < static_cast<int>(it->parameter_blocks.size()); j++)
             {
@@ -277,7 +278,6 @@ void MarginalizationInfo::marginalize()
     ThreadsStruct threadsstruct[NUM_THREADS];
     //将先验约束因子平均分配到4个线程中
     int i = 0;
-    //
     for (auto it : factors)
     {
         threadsstruct[i].sub_factors.push_back(it);
@@ -290,7 +290,7 @@ void MarginalizationInfo::marginalize()
         TicToc zero_matrix;
         threadsstruct[i].A = Eigen::MatrixXd::Zero(pos,pos);
         threadsstruct[i].b = Eigen::VectorXd::Zero(pos);
-        threadsstruct[i].parameter_block_size = parameter_block_size;
+        threadsstruct[i].parameter_block_size = parameter_block_size;//marg里的block_size，4个线程共享
         threadsstruct[i].parameter_block_idx = parameter_block_idx;
         int ret = pthread_create( &tids[i], NULL, ThreadsConstructA ,(void*)&(threadsstruct[i]));//参数4是arg，void*类型，取其地址并强制类型转换
         if (ret != 0)
@@ -310,7 +310,7 @@ void MarginalizationInfo::marginalize()
     //ROS_INFO("A diff %f , b diff %f ", (A - tmp_A).sum(), (b - tmp_b).sum());
 
 
-    /*求Amm的逆矩阵时，为了保证数值稳定性，做了Amm=1/2*(Amm+Amm^T)的运算，Amm本身是一个对称矩阵，所以  等式成立。接着对Amm进行了特征值分解,再求逆，更加的快速*/
+    /*求Amm的逆矩阵时，为了保证数值稳定性，做了Amm=1/2*(Amm+Amm^T)的运算，Amm本身是一个对称矩阵，所以等式成立。接着对Amm进行了特征值分解,再求逆，更加的快速*/
     //数值计算中，由于计算机浮点数精度的限制，有时候数值误差可能导致 Amm 不精确地保持对称性。
     //通过将 Amm 更新为其本身与其转置的平均值，可以强制保持对称性，提高数值稳定性。这种对称性维护的策略在数值计算中比较常见。
     Eigen::MatrixXd Amm = 0.5 * (A.block(0, 0, m, m) + A.block(0, 0, m, m).transpose());
@@ -333,6 +333,8 @@ void MarginalizationInfo::marginalize()
     A = Arr - Arm * Amm_inv * Amr;
     b = brr - Arm * Amm_inv * bmm;
 
+    //marg不用求出△x，所以不用对方程组求解，但是优化时需要求解出整个△x
+
     //由于Ceres里面不能直接操作信息矩阵，所以这里从信息矩阵中反解出来了Jacobian和residual，而g2o是可以的，ceres里只需要维护H和b
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes2(A);
     //对称阵
@@ -343,7 +345,7 @@ void MarginalizationInfo::marginalize()
     Eigen::VectorXd S_sqrt = S.cwiseSqrt();//开根号
     Eigen::VectorXd S_inv_sqrt = S_inv.cwiseSqrt();
 
-    //从H和b中反解出Jacobian和residual
+    //从H和b中反解出Jacobian和residual(可看第5篇博客5.2.2节)
     linearized_jacobians = S_sqrt.asDiagonal() * saes2.eigenvectors().transpose();
     linearized_residuals = S_inv_sqrt.asDiagonal() * saes2.eigenvectors().transpose() * b;
     //std::cout << A << std::endl

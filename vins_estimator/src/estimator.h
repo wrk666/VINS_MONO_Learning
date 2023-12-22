@@ -115,6 +115,13 @@ class Estimator
     double para_Td[1][1];
     double para_Tr[1][1];
 
+    //用于check参数是否被加入，加了多少
+    double check_para_Pose[WINDOW_SIZE + 1][SIZE_POSE] = {{0}};//传给ceres的WINDOW内的所有pose
+    double check_para_SpeedBias[WINDOW_SIZE + 1][SIZE_SPEEDBIAS] = {{0}};
+    double check_para_Feature[NUM_OF_F][SIZE_FEATURE] = {{0}};
+    double check_para_Ex_Pose[NUM_OF_CAM][SIZE_POSE] = {{0}};
+    double check_para_Td[1][1] = {{0}};
+
     int loop_window_index;
 
     MarginalizationInfo *last_marginalization_info;//编译器自动生成默认构造函数

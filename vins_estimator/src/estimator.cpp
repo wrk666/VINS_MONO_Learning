@@ -840,6 +840,9 @@ void Estimator::optimization()
     TicToc t_whole, t_prepare;
     vector2double();
 
+    //用于check维度
+    std::unordered_map<long, uint8_t> param_addr_check;//所有param维度
+    std::unordered_map<long, uint8_t> landmark_addr_check;//landmark维度
     //1.添加边缘化残差（先验部分）
     if (last_marginalization_info)
     {
@@ -847,6 +850,28 @@ void Estimator::optimization()
         MarginalizationFactor *marginalization_factor = new MarginalizationFactor(last_marginalization_info);//里面设置了上次先验的什么size，现在还不懂
         problem.AddResidualBlock(marginalization_factor, NULL,
                                  last_marginalization_parameter_blocks);
+
+//        /*用于check维度是否正确*/
+//        parameter_block_size[reinterpret_cast<long>(addr)] = size;
+        for(int i=0; i<last_marginalization_parameter_blocks.size(); ++i) {
+            //这个地方的landmark没有加到landmark_addr_check中去
+            //没有landmark
+            if(last_marginalization_info->parameter_block_size[reinterpret_cast<long>(last_marginalization_parameter_blocks[i])]==1) {
+                landmark_addr_check[reinterpret_cast<long>(last_marginalization_parameter_blocks[i])] = 1;
+            }
+
+            //这个double*的地址代表的待优化变量的local_size，把每个地址都记录在map中，分配给待优化变量的地址都是连续的
+            for(int j=0; j<last_marginalization_info->parameter_block_size[reinterpret_cast<long>(last_marginalization_parameter_blocks[i])]; ++j) {
+                param_addr_check[reinterpret_cast<long>(last_marginalization_parameter_blocks[i]) + (double)j * (long) sizeof(long)] = 1;
+
+            }
+        }
+        ROS_DEBUG("\nhas prior blocks\n");
+
+        //大作业T1.a 这里要添加自己的makehessian的代码AddResidualBlockSolver()//类似于marg一样管理所有的factor，只不过，这里的m是WINDOW内所有的landmark，n是所有的P，V，Tbc，td，relopose
+        //管理方式也是地址->idx,地址->size一样，在添加的时候指定landmark的drop_set为valid，剩下的为非valid
+        //在最后求解出整个delta x，在solve中用LM评估迭代效果并继续迭代
+
 //        ROS_DEBUG("last_marginalization_parameter_blocks[0] long addr: %ld, [1] long addr:%ld",
 //                  reinterpret_cast<long>(last_marginalization_parameter_blocks[0]),
 //                  reinterpret_cast<long>(last_marginalization_parameter_blocks[1]));
@@ -861,6 +886,21 @@ void Estimator::optimization()
             continue;
         IMUFactor* imu_factor = new IMUFactor(pre_integrations[j]);//这里的factor就是残差residual，ceres里面叫factor
         problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j]);
+
+        //check维度
+        for(int k=0; k<SIZE_POSE; ++k) {
+            param_addr_check[reinterpret_cast<long>(para_Pose[i]) + (long)k * (long)sizeof(long)] = 1;
+        }
+        for(int k=0; k<SIZE_SPEEDBIAS; ++k) {
+            param_addr_check[reinterpret_cast<long>(para_SpeedBias[i]) + (long)k * (long)sizeof(long)] = 1;
+        }
+        for(int k=0; k<SIZE_POSE; ++k) {
+            param_addr_check[reinterpret_cast<long>(para_Pose[j]) + (long)k * (long)sizeof(long)] = 1;
+        }
+        for(int k=0; k<SIZE_SPEEDBIAS; ++k) {
+            param_addr_check[reinterpret_cast<long>(para_SpeedBias[j]) + (long)k * (long)sizeof(long)] = 1;
+        }
+
     }
 
     //3.添加视觉残差
@@ -896,6 +936,21 @@ void Estimator::optimization()
                                                                      it_per_id.feature_per_frame[0].cur_td, it_per_frame.cur_td,
                                                                      it_per_id.feature_per_frame[0].uv.y(), it_per_frame.uv.y());
                     problem.AddResidualBlock(f_td, loss_function, para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index], para_Td[0]);
+
+                    //check维度
+                    for(int k=0; k<SIZE_POSE; ++k) {
+                        param_addr_check[reinterpret_cast<long>(para_Pose[imu_i]) + (long)k * (long)sizeof(long)] = 1;
+                    }
+                    for(int k=0; k<SIZE_POSE; ++k) {
+                        param_addr_check[reinterpret_cast<long>(para_Pose[imu_j]) + (long)k * (long)sizeof(long)] = 1;
+                    }
+                    for(int k=0; k<SIZE_POSE; ++k) {
+                        param_addr_check[reinterpret_cast<long>(para_Ex_Pose[0]) + (long)k * (long)sizeof(long)] = 1;
+                    }
+                    param_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
+                    landmark_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
+                    param_addr_check[reinterpret_cast<long>(para_Td[0])] = 1;
+
                     /*
                     double **para = new double *[5];
                     para[0] = para_Pose[imu_i];
@@ -910,14 +965,26 @@ void Estimator::optimization()
             {
                 ProjectionFactor *f = new ProjectionFactor(pts_i, pts_j);
                 problem.AddResidualBlock(f, loss_function, para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]);
+
+                //check维度
+                for(int k=0; k<SIZE_POSE; ++k) {
+                    param_addr_check[reinterpret_cast<long>(para_Pose[imu_i]) + (long)k * (long)sizeof(long)] = 1;
+                }
+                for(int k=0; k<SIZE_POSE; ++k) {
+                    param_addr_check[reinterpret_cast<long>(para_Pose[imu_j]) + (long)k * (long)sizeof(long)] = 1;
+                }
+                for(int k=0; k<SIZE_POSE; ++k) {
+                    param_addr_check[reinterpret_cast<long>(para_Ex_Pose[0]) + (long)k * (long)sizeof(long)] = 1;
+                }
+                param_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
+                landmark_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
             }
             f_m_cnt++;
         }
     }
 
-    ROS_DEBUG("visual measurement count: %d", f_m_cnt);
+    ROS_DEBUG("visual measurement count: %d", f_m_cnt);//总的视觉观测个数，观测可能是在不同帧对同一个landmark进行观测，所以可能查过1000，注意与landmark个数进行区分
     ROS_DEBUG("prepare for ceres: %f", t_prepare.toc());
-
     //4.添加闭环检测残差，计算滑动窗口中与每一个闭环关键帧的相对位姿，这个相对位置是为后面的图优化(pose graph)准备 或者是 快速重定位(崔华坤PDF7.2节)
     //这里注意relo_pose是Tw2_bi = Tw2_w1 * Tw1_bi
     if(relocalization_info)
@@ -952,17 +1019,36 @@ void Estimator::optimization()
                     //relo_Pose是Tw2_bi
                     problem.AddResidualBlock(f, loss_function, para_Pose[start], relo_Pose, para_Ex_Pose[0], para_Feature[feature_index]);
                     retrive_feature_index++;
+
+                    //check维度
+                    for(int k=0; k<SIZE_POSE; ++k) {
+                        param_addr_check[reinterpret_cast<long>(para_Pose[start]) + (long)k * (long)sizeof(long)] = 1;
+                    }
+                    for(int k=0; k<SIZE_POSE; ++k) {
+                        param_addr_check[reinterpret_cast<long>(relo_Pose) + (long)k * (long)sizeof(long)] = 1;
+                    }
+                    for(int k=0; k<SIZE_POSE; ++k) {
+                        param_addr_check[reinterpret_cast<long>(para_Ex_Pose[0]) + (long)k * (long)sizeof(long)] = 1;
+                    }
+                    param_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
+                    landmark_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
+
+                    ROS_DEBUG("\nhas relocation blocks\n");
                 }     
             }
         }
     }
 
+    ROS_DEBUG("\nfinal param_addr_check.size() = %lu, landmark size: %lu, except landmark size = %lu\n",
+              param_addr_check.size(), landmark_addr_check.size(), param_addr_check.size()-landmark_addr_check.size()+1);//landmark_addr_check中多加了个td
+
+
     ceres::Solver::Options options;
 
     options.linear_solver_type = ceres::DENSE_SCHUR;
     //options.num_threads = 2;
-    options.trust_region_strategy_type = ceres::DOGLEG;//狗腿算法，与LM较为接近
-//    options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;//LM
+//    options.trust_region_strategy_type = ceres::DOGLEG;//狗腿算法，与LM较为接近
+    options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;//LM
     options.max_num_iterations = NUM_ITERATIONS;
     //options.use_explicit_schur_complement = true;
     //options.minimizer_progress_to_stdout = true;
@@ -975,6 +1061,7 @@ void Estimator::optimization()
     ceres::Solver::Summary summary;
     //这里需要换成自己实现的solve，自己构建H矩阵并且自己实现LM算法，测试VINS-MONO的精度和ceres是否一样
     ceres::Solve(options, &problem, &summary);
+
     //cout << summary.BriefReport() << endl;
     ROS_DEBUG("Iterations : %d", static_cast<int>(summary.iterations.size()));
     ROS_DEBUG("solver costs: %f", t_solver.toc());
