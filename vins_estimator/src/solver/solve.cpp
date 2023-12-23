@@ -93,7 +93,7 @@ for(int i=0; i<cost_function->parameter_block_sizes().size(); ++i) {
     }
 }
 
-SolverInfo::~SolverInfo()
+Solver::~Solver()
 {
     //ROS_WARN("release marginlizationinfo");
 
@@ -111,7 +111,7 @@ SolverInfo::~SolverInfo()
     }
 }
 
-void SolverInfo::addResidualBlockInfo(ResidualBlockInfo *residual_block_info)
+void Solver::addResidualBlockInfo(ResidualBlockInfo *residual_block_info)
 {
     factors.emplace_back(residual_block_info);
 
@@ -140,7 +140,7 @@ void SolverInfo::addResidualBlockInfo(ResidualBlockInfo *residual_block_info)
 }
 
 
-void SolverInfo::preMarginalize()
+void Solver::preMakeHessian()
 {
 //    ROS_INFO_STREAM("\nfactors.size(): " << factors.size());
     int i=0;
@@ -166,12 +166,12 @@ void SolverInfo::preMarginalize()
     }
 }
 
-int SolverInfo::localSize(int size) const
+int Solver::localSize(int size) const
 {
     return size == 7 ? 6 : size;
 }
 
-int SolverInfo::globalSize(int size) const
+int Solver::globalSize(int size) const
 {
     return size == 6 ? 7 : size;
 }
@@ -217,7 +217,7 @@ void* ThreadsConstructA(void* threadsstruct)
 }
 
 
-void SolverInfo::marginalizeSolve()
+void Solver::makeHessian()
 {
     int pos = 0;//Hessian矩阵整体维度
     //it.first是要被marg掉的变量的地址,将其size累加起来就得到了所有被marg的变量的总localSize=m
@@ -245,7 +245,7 @@ void SolverInfo::marginalizeSolve()
     n = pos - m;//remain变量的总维度，这样写建立了n和m间的关系，表意更强
     ROS_DEBUG("\nn: %d, tmp_n: %d", n, tmp_n);
 
-    ROS_DEBUG("\nSolverInfo, pos: %d, m: %d, n: %d, size: %d", pos, m, n, (int)parameter_block_idx.size());
+    ROS_DEBUG("\nSolver, pos: %d, m: %d, n: %d, size: %d", pos, m, n, (int)parameter_block_idx.size());
 
     TicToc t_summing;
     Eigen::MatrixXd A(pos, pos);//总系数矩阵
@@ -253,11 +253,7 @@ void SolverInfo::marginalizeSolve()
     A.setZero();
     b.setZero();
 
-    Eigen::MatrixXd total_A(pos, pos);//总系数矩阵
-    Eigen::VectorXd total_b(pos);//总误差项
-    total_A.setZero();
-    total_b.setZero();
-    //构建信息矩阵可以多线程构建
+//构建信息矩阵可以多线程构建
 /*    //single thread
 for (auto it : factors)
 {
@@ -326,91 +322,11 @@ ROS_INFO("summing up costs %f ms", t_summing.toc());*/
     //ROS_DEBUG("thread summing up costs %f ms", t_thread_summing.toc());
     //ROS_INFO("A diff %f , b diff %f ", (A - tmp_A).sum(), (b - tmp_b).sum());
 
-    total_A = A;
-    total_b = b;
-
-    /*求Amm的逆矩阵时，为了保证数值稳定性，做了Amm=1/2*(Amm+Amm^T)的运算，Amm本身是一个对称矩阵，所以等式成立。接着对Amm进行了特征值分解,再求逆，更加的快速*/
-    //数值计算中，由于计算机浮点数精度的限制，有时候数值误差可能导致 Amm 不精确地保持对称性。
-    //通过将 Amm 更新为其本身与其转置的平均值，可以强制保持对称性，提高数值稳定性。这种对称性维护的策略在数值计算中比较常见。
-    Eigen::MatrixXd Amm = 0.5 * (A.block(0, 0, m, m) + A.block(0, 0, m, m).transpose());
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes(Amm);
-
-    //这个1e-4应该是个经验值，不懂数值稳定性，暂不研究
-    ROS_ASSERT_MSG(saes.eigenvalues().minCoeff() >= -1e-4, "min eigenvalue %f", saes.eigenvalues().minCoeff());
-    size_t tmp_size = saes.eigenvalues().size();
-    ROS_DEBUG("\nhere saes min eigenvalue: %f, saes.eigenvalues.size():%lu, sigma3: %f, sigma4: %f,  sigma4/sigma3=%f",
-              saes.eigenvalues().minCoeff(), tmp_size, saes.eigenvalues()(tmp_size-2), saes.eigenvalues()(tmp_size-1),
-              saes.eigenvalues()(tmp_size-1)/saes.eigenvalues()(tmp_size-2));
-
-    //marg的矩阵块求逆,特征值分解求逆更快
-    Eigen::MatrixXd Amm_inv = saes.eigenvectors()
-                              * Eigen::VectorXd((saes.eigenvalues().array() > eps).select(saes.eigenvalues().array().inverse(), 0)).asDiagonal()
-                              * saes.eigenvectors().transpose();
-    //printf("error1: %f\n", (Amm * Amm_inv - Eigen::MatrixXd::Identity(m, m)).sum());
-
-    Eigen::VectorXd bmm = b.segment(0, m);
-    Eigen::MatrixXd Amr = A.block(0, m, m, n);
-    Eigen::MatrixXd Arm = A.block(m, 0, n, m);
-    Eigen::MatrixXd Arr = A.block(m, m, n, n);
-    Eigen::VectorXd brr = b.segment(m, n);
-    //Shur compliment 消元，先求出delta x_r，再求delta x_m
-    A = Arr - Arm * Amm_inv * Amr;
-    b = brr - Arm * Amm_inv * bmm;
-
-    //由于Ceres里面不能直接操作信息矩阵，所以这里从信息矩阵中反解出来了Jacobian和residual，而g2o是可以的，ceres里只需要维护H和b
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes2(A);
-    //对称阵
-    Eigen::VectorXd S = Eigen::VectorXd((saes2.eigenvalues().array() > eps).select(saes2.eigenvalues().array(), 0));
-    //对称阵的倒数阵
-    Eigen::VectorXd S_inv = Eigen::VectorXd((saes2.eigenvalues().array() > eps).select(saes2.eigenvalues().array().inverse(), 0));
-
-    Eigen::VectorXd S_sqrt = S.cwiseSqrt();//开根号
-    Eigen::VectorXd S_inv_sqrt = S_inv.cwiseSqrt();
-
-    //从H和b中反解出线性化的Jacobian和residual值(可看第5篇博客5.2.2节)
-    linearized_jacobians = S_sqrt.asDiagonal() * saes2.eigenvectors().transpose();
-    linearized_residuals = S_inv_sqrt.asDiagonal() * saes2.eigenvectors().transpose() * b;
-
-
-    //求解Hx=b，marg不用求出△x，所以不用对方程组求解，但是优化时需要求解出整个△x
-    Eigen::MatrixXd Amm_solver = 0.5 * (total_A.block(0, 0, m, m) + total_A.block(0, 0, m, m).transpose());
-    Eigen::VectorXd bmm_solver = total_b.segment(0, m);
-    Eigen::MatrixXd Amr_solver = total_A.block(0, m, m, n);
-    Eigen::MatrixXd Arm_solver = total_A.block(m, 0, n, m);
-    Eigen::MatrixXd Arr_solver = total_A.block(m, m, n, n);
-    Eigen::VectorXd brr_solver = total_b.segment(m, n);
-    Eigen::MatrixXd Amm_inv_solver = Amm_inv;
-    Eigen::MatrixXd tmpA_solver = Arm_solver * Amm_inv_solver;
-
-    //step1: Schur补
-    Eigen::MatrixXd Arr_schur = Arr_solver - tmpA_solver * Amr_solver;
-    Eigen::VectorXd brr_schur = brr - tmpA_solver * bmm_solver;
-
-    ROS_DEBUG("here1");
-
-    // step2: solve Hpp * delta_x = bpp
-    //1 TODO：没有lambda，不知道怎么用PCG solver来求解△xrr，先用上面的SVD求逆方法，
-    //2 TODO：数值稳定性目前不懂，先不assert看看会有什么效果
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes_solver(Arr_schur);
-//    ROS_ASSERT_MSG(saes_solver.eigenvalues().minCoeff() >= -1e-4, "min eigenvalue %f", saes_solver.eigenvalues().minCoeff());
-    Eigen::MatrixXd Arr_schur_inv = saes_solver.eigenvectors()
-                              * Eigen::VectorXd((saes_solver.eigenvalues().array() > eps).select(saes_solver.eigenvalues().array().inverse(), 0)).asDiagonal()
-                              * saes_solver.eigenvectors().transpose();
-    //这个可能会崩，不知道为啥
-//    tmp_size = saes_solver.eigenvalues().size();
-//    ROS_DEBUG("\nhere saes_solver min eigenvalue: %f, saes.eigenvalues.size():%lu, sigma3: %f, sigma4: %f,  sigma4/sigma3=%f",
-//              saes_solver.eigenvalues().minCoeff(), tmp_size, saes.eigenvalues()(tmp_size-2), saes_solver.eigenvalues()(tmp_size-1),
-//              saes_solver.eigenvalues()(tmp_size-1)/saes_solver.eigenvalues()(tmp_size-2));
-
-    ROS_DEBUG("here2");
-
-    delta_x_rr_ = Arr_schur_inv * brr_schur;
-    delta_x_mm_ = Amm_inv_solver * (bmm_solver - Amr_solver * delta_x_rr_);
-    //求解完成，可以进入LM evaluation ρ！
-    ROS_DEBUG("here3");
+    Hessian_ = A;
+    b_ = b;
 }
 
-std::vector<double *> SolverInfo::getParameterBlocks(std::unordered_map<long, double *> &addr_shift)
+std::vector<double *> Solver::getParameterBlocks(std::unordered_map<long, double *> &addr_shift)
 {
     std::vector<double *> keep_block_addr;//remain的优化变量的地址
     keep_block_size.clear();
@@ -435,25 +351,28 @@ std::vector<double *> SolverInfo::getParameterBlocks(std::unordered_map<long, do
 }
 
 
-
-
-
-
-
 //求解器相关函数
-/*bool Solver::solve(int iterations) {
+bool Solver::solve(int iterations) {
 
 
-    if (edges_.size() == 0 || verticies_.size() == 0) {
+/*    if (edges_.size() == 0 || verticies_.size() == 0) {
         std::cerr << "\nCannot solve problem without edges or verticies" << std::endl;
         return false;
-    }
+    }*/
+
+    TicToc t_pre_margin;
+    preMakeHessian();
+    ROS_DEBUG("solver.solver_info_ pre marginalization %f ms", t_pre_margin.toc());
+
+    //多线程计算在X0处的整个先验项的参数块，雅可比矩阵和残差值
+    //5、多线程构造先验项舒尔补AX=b的结构，在X0处线性化计算Jacobian和残差
+    TicToc t_margin;
+    makeHessian();
+    ROS_DEBUG("\nsolver_info_ marginalization %f ms", t_margin.toc());
+    ROS_DEBUG("\nlinearized_jacobians (rows, cols) = (%lu, %lu)", linearized_jacobians.rows(), linearized_jacobians.cols());
 
     TicToc t_solve;
-    // 统计优化变量的维数，为构建 H 矩阵做准备
-    setOrdering();
-    // 遍历edge, 构建 H = J^T * J 矩阵
-    makeHessian();
+
     // LM 初始化
     computeLambdaInitLM();
     // LM 算法迭代求解
@@ -520,98 +439,80 @@ std::vector<double *> SolverInfo::getParameterBlocks(std::unordered_map<long, do
 
 
     }
-    std::cout << "problem solve cost: " << t_solve.toc() << " ms" << std::endl;
-    std::cout << "   makeHessian cost: " << t_hessian_cost_ << " ms" << std::endl;
+/*    std::cout << "problem solve cost: " << t_solve.toc() << " ms" << std::endl;
+    std::cout << "   makeHessian cost: " << t_hessian_cost_ << " ms" << std::endl;*/
     return true;
 }
 
 
-void Solver::setOrdering() {
-
-    // 每次重新计数
-    ordering_poses_ = 0;
-    ordering_generic_ = 0;
-    ordering_landmarks_ = 0;
-
-    // Note:: verticies_ 是 map 类型的, 顺序是按照 id 号排序的
-    // 统计带估计的所有变量的总维度
-    for (auto vertex: verticies_) {
-        ordering_generic_ += vertex.second->LocalDimension();  // 所有的优化变量总维数
-    }
-}
-
-//可以暂时不看，后面会再讲
-void Solver::makeHessian() {
-    TicToc t_h;
-    // 直接构造大的 H 矩阵
-    ulong size = ordering_generic_;
-    MatXX H(MatXX::Zero(size, size));
-    VecX b(VecX::Zero(size));
-
-    // TODO:: accelate, accelate, accelate
-//#ifdef USE_OPENMP
-//#pragma omp parallel for
-//#endif
-
-    // 遍历每个残差，并计算他们的雅克比，得到最后的 H = J^T * J
-    for (auto &edge: edges_) {
-
-        edge.second->ComputeResidual();
-        edge.second->ComputeJacobians();
-
-        auto jacobians = edge.second->Jacobians();
-        auto verticies = edge.second->Verticies();
-        assert(jacobians.size() == verticies.size());
-        for (size_t i = 0; i < verticies.size(); ++i) {
-            auto v_i = verticies[i];
-            if (v_i->IsFixed()) continue;    // Hessian 里不需要添加它的信息，也就是它的雅克比为 0
-
-            auto jacobian_i = jacobians[i];
-            ulong index_i = v_i->OrderingId();
-            ulong dim_i = v_i->LocalDimension();
-
-            MatXX JtW = jacobian_i.transpose() * edge.second->Information();
-            for (size_t j = i; j < verticies.size(); ++j) {
-                auto v_j = verticies[j];
-
-                if (v_j->IsFixed()) continue;
-
-                auto jacobian_j = jacobians[j];
-                ulong index_j = v_j->OrderingId();
-                ulong dim_j = v_j->LocalDimension();
-
-                assert(v_j->OrderingId() != -1);
-                MatXX hessian = JtW * jacobian_j;
-                // 所有的信息矩阵叠加起来
-                H.block(index_i, index_j, dim_i, dim_j).noalias() += hessian;
-                if (j != i) {
-                    // 对称的下三角
-                    H.block(index_j, index_i, dim_j, dim_i).noalias() += hessian.transpose();
-                }
-            }
-            b.segment(index_i, dim_i).noalias() -= JtW * edge.second->Residual();
-        }
-
-    }
-    Hessian_ = H;
-    b_ = b;
-    t_hessian_cost_ += t_h.toc();
-
-    delta_x_ = VecX::Zero(size);  // initial delta_x = 0_n;
-
-}
-
-*//*
-* Solve Hx = b, we can use PCG iterative method or use sparse Cholesky
-*//*
+/*Solve Hx = b, we can use PCG iterative method or use sparse Cholesky*/
 void Solver::solveLinearSystem() {
+//直接求逆
+//    delta_x_ = Hessian_.inverse() * b_;
+//    delta_x_ = H.ldlt().solve(b_);
 
-    delta_x_ = Hessian_.inverse() * b_;
-//        delta_x_ = H.ldlt().solve(b_);
+        /*这里进行schur消元求解*/
+    /*求Amm的逆矩阵时，为了保证数值稳定性，做了Amm=1/2*(Amm+Amm^T)的运算，Amm本身是一个对称矩阵，所以等式成立。接着对Amm进行了特征值分解,再求逆，更加的快速*/
+    //数值计算中，由于计算机浮点数精度的限制，有时候数值误差可能导致 Amm 不精确地保持对称性。
+    //通过将 Amm 更新为其本身与其转置的平均值，可以强制保持对称性，提高数值稳定性。这种对称性维护的策略在数值计算中比较常见。
+    Eigen::MatrixXd Amm = 0.5 * (Hessian_.block(0, 0, m, m) + Hessian_.block(0, 0, m, m).transpose());
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes(Amm);
+
+    //这个1e-4应该是个经验值，不懂数值稳定性，暂不研究
+    ROS_ASSERT_MSG(saes.eigenvalues().minCoeff() >= -1e-4, "min eigenvalue %f", saes.eigenvalues().minCoeff());
+    size_t tmp_size = saes.eigenvalues().size();
+    ROS_DEBUG("\nhere saes min eigenvalue: %f, saes.eigenvalues.size():%lu, sigma3: %f, sigma4: %f,  sigma4/sigma3=%f",
+              saes.eigenvalues().minCoeff(), tmp_size, saes.eigenvalues()(tmp_size-2), saes.eigenvalues()(tmp_size-1),
+              saes.eigenvalues()(tmp_size-1)/saes.eigenvalues()(tmp_size-2));
+
+    //marg的矩阵块求逆,特征值分解求逆更快
+    Eigen::MatrixXd Amm_inv = saes.eigenvectors()
+                              * Eigen::VectorXd((saes.eigenvalues().array() > eps).select(saes.eigenvalues().array().inverse(), 0)).asDiagonal()
+                              * saes.eigenvectors().transpose();
+    //printf("error1: %f\n", (Amm * Amm_inv - Eigen::MatrixXd::Identity(m, m)).sum());
+
+    //求解Hx=b，marg不用求出△x，所以不用对方程组求解，但是优化时需要求解出整个△x
+    Eigen::MatrixXd Amm_solver = 0.5 * (Hessian_.block(0, 0, m, m) + Hessian_.block(0, 0, m, m).transpose());
+    Eigen::VectorXd bmm_solver = b_.segment(0, m);
+    Eigen::MatrixXd Amr_solver = Hessian_.block(0, m, m, n);
+    Eigen::MatrixXd Arm_solver = Hessian_.block(m, 0, n, m);
+    Eigen::MatrixXd Arr_solver = Hessian_.block(m, m, n, n);
+    Eigen::VectorXd brr_solver = b_.segment(m, n);
+    Eigen::MatrixXd Amm_inv_solver = Amm_inv;
+    Eigen::MatrixXd tmpA_solver = Arm_solver * Amm_inv_solver;
+
+    //step1: Schur补
+    Eigen::MatrixXd Arr_schur = Arr_solver - tmpA_solver * Amr_solver;
+    Eigen::VectorXd brr_schur = brr_solver - tmpA_solver * bmm_solver;
+
+    ROS_DEBUG("here1");
+
+    // step2: solve Hpp * delta_x = bpp
+    //1 TODO：没有lambda，不知道怎么用PCG solver来求解△xrr，先用上面的SVD求逆方法，
+    //2 TODO：数值稳定性目前不懂，先不assert看看会有什么效果
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes_solver(Arr_schur);
+//    ROS_ASSERT_MSG(saes_solver.eigenvalues().minCoeff() >= -1e-4, "min eigenvalue %f", saes_solver.eigenvalues().minCoeff());
+    Eigen::MatrixXd Arr_schur_inv = saes_solver.eigenvectors()
+                                    * Eigen::VectorXd((saes_solver.eigenvalues().array() > eps).select(saes_solver.eigenvalues().array().inverse(), 0)).asDiagonal()
+                                    * saes_solver.eigenvectors().transpose();
+    //这个可能会崩，不知道为啥
+//    tmp_size = saes_solver.eigenvalues().size();
+//    ROS_DEBUG("\nhere saes_solver min eigenvalue: %f, saes.eigenvalues.size():%lu, sigma3: %f, sigma4: %f,  sigma4/sigma3=%f",
+//              saes_solver.eigenvalues().minCoeff(), tmp_size, saes.eigenvalues()(tmp_size-2), saes_solver.eigenvalues()(tmp_size-1),
+//              saes_solver.eigenvalues()(tmp_size-1)/saes_solver.eigenvalues()(tmp_size-2));
+
+    ROS_DEBUG("here2");
+
+    Eigen::VectorXd delta_x_rr = Arr_schur_inv * brr_schur;
+    Eigen::VectorXd delta_x_mm = Amm_inv_solver * (bmm_solver - Amr_solver * delta_x_rr);
+    delta_x_.tail(n) = delta_x_rr;
+    delta_x_.head(m) = delta_x_mm;
+    ROS_DEBUG("here3 solve complete");
 
 }
 
 void Solver::updateStates() {
+    //要使用idx来找对应的param
     for (auto vertex: verticies_) {
         ulong idx = vertex.second->OrderingId();
         ulong dim = vertex.second->LocalDimension();
@@ -712,15 +613,15 @@ bool Solver::isGoodStepInLM() {
     printf("%d record lambda finish\n", try_iter_);
 
     return ret;
-}*/
+}
 
-/** @brief conjugate gradient with perconditioning
+/*
+* @brief conjugate gradient with perconditioning
 *
 *  the jacobi PCG method
 *
-*//*
-
-VecX Solver::pcgSolver(const MatXX &A, const VecX &b, int maxIter = -1) {
+*/
+Eigen::MatrixXd Solver::pcgSolver(const MatXX &A, const VecX &b, int maxIter = -1) {
     assert(A.rows() == A.cols() && "PCG solver ERROR: A is not a square matrix");
     int rows = b.rows();
     int n = maxIter < 0 ? rows : maxIter;
@@ -750,6 +651,6 @@ VecX Solver::pcgSolver(const MatXX &A, const VecX &b, int maxIter = -1) {
         r1 -= alpha * w;
     }
     return x;
-}*/
+}
 
 }

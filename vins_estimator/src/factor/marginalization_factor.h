@@ -24,7 +24,7 @@ struct ResidualBlockInfo
     std::vector<double *> parameter_blocks;//优化变量数据的地址，sizes每个优化变量块的变量大小，以IMU残差为例，为[7,9,7,9]
     std::vector<int> drop_set;//待边缘化的优化变量id
 
-    double **raw_jacobians;//二重指针,是为了配合ceres的形参 double** jacobians
+    double **raw_jacobians;//二重指针,仿照ceres的形参 double** jacobians
     std::vector<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> jacobians;//这个数据结构看不懂，
     Eigen::VectorXd residuals;//残差 IMU:15X1 视觉:2X1
 

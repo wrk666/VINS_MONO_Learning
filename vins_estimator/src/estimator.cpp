@@ -845,8 +845,8 @@ void Estimator::optimization()
 
 //#else
     //自己写的solver如何固定住外参呢？
-    solver::SolverInfo *solver_info = new solver::SolverInfo();
     solver::Solver solver;
+
 #endif
 
 
@@ -882,7 +882,7 @@ void Estimator::optimization()
         ROS_DEBUG("\nlinearized_jacobians (rows, cols) = (%lu, %lu)",
                   last_marginalization_info->linearized_jacobians.rows(), last_marginalization_info->linearized_jacobians.cols());
 
-        size_1 = param_addr_check.size();//应该是76  实际87
+        size_1 = param_addr_check.size();//76
         ROS_DEBUG("\nprior size1=%lu, param_addr_check.size() = %lu, landmark size: %lu, except landmark size = %lu",
                   size_1, param_addr_check.size(), landmark_addr_check.size(), param_addr_check.size()-landmark_addr_check.size());//landmark_addr_check中多加了个td
 
@@ -891,7 +891,7 @@ void Estimator::optimization()
         solver::ResidualBlockInfo *residual_block_info = new solver::ResidualBlockInfo(marginalization_factor, NULL,
                                                                        last_marginalization_parameter_blocks,
                                                                                        vector<int>{});
-        solver_info->addResidualBlockInfo(residual_block_info);
+        solver.addResidualBlockInfo(residual_block_info);
 #endif
     }
 
@@ -944,11 +944,11 @@ void Estimator::optimization()
                 new solver::ResidualBlockInfo(imu_factor, NULL,
                                               vector<double *>{para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j]},
                                               vector<int>{});
-        solver_info->addResidualBlockInfo(residual_block_info);
+        solver.addResidualBlockInfo(residual_block_info);
 #endif
     }
 #ifdef CERES_SOLVE
-    size_t size_2 = param_addr_check.size() - size_1;//应该是81  V2~V10  实际97为啥？？？
+    size_t size_2 = param_addr_check.size() - size_1;//96
     ROS_DEBUG("\nIMU size2=%lu, param_addr_check.size() = %lu, landmark size: %lu, except landmark size = %lu",
               size_2, param_addr_check.size(), landmark_addr_check.size(), param_addr_check.size()-landmark_addr_check.size());//landmark_addr_check中多加了个td
 #endif
@@ -1015,7 +1015,7 @@ void Estimator::optimization()
                 solver::ResidualBlockInfo *residual_block_info = new solver::ResidualBlockInfo(f_td, loss_function,
                                                                                 vector<double*>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index], para_Td[0]},
                                                                                                vector<int>{3});
-                solver_info->addResidualBlockInfo(residual_block_info);
+                solver.addResidualBlockInfo(residual_block_info);
 #endif
             }
             else
@@ -1039,7 +1039,7 @@ void Estimator::optimization()
                 solver::ResidualBlockInfo *residual_block_info = new solver::ResidualBlockInfo(f, loss_function,
                                                                                 vector<double*>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]},
                                                                                                vector<int>{3});
-                solver_info->addResidualBlockInfo(residual_block_info);
+                solver.addResidualBlockInfo(residual_block_info);
 #endif
             }
             f_m_cnt++;
@@ -1107,7 +1107,7 @@ void Estimator::optimization()
                     solver::ResidualBlockInfo *residual_block_info = new solver::ResidualBlockInfo(f, loss_function,
                                                                                                    vector<double*>{para_Pose[start], relo_Pose, para_Ex_Pose[0], para_Feature[feature_index]},
                                                                                                    vector<int>{3});
-                    solver_info->addResidualBlockInfo(residual_block_info);
+                    solver.addResidualBlockInfo(residual_block_info);
 #endif
                     retrive_feature_index++;
                 }     
@@ -1143,19 +1143,7 @@ void Estimator::optimization()
     ROS_DEBUG("Iterations : %d", static_cast<int>(summary.iterations.size()));
     ROS_DEBUG("solver costs: %f", t_solver.toc());
 //#else //手写求解器求解
-
-    TicToc t_pre_margin;
-    solver_info->preMarginalize();
-    ROS_DEBUG("solver_info pre marginalization %f ms", t_pre_margin.toc());
-
-    //多线程计算在X0处的整个先验项的参数块，雅可比矩阵和残差值
-    //5、多线程构造先验项舒尔补AX=b的结构，在X0处线性化计算Jacobian和残差
-    TicToc t_margin;
-    solver_info->marginalizeSolve();
-    ROS_DEBUG("solver_info marginalization %f ms", t_margin.toc());
-    ROS_DEBUG("\nsolver_info linearized_jacobians (rows, cols) = (%lu, %lu)",
-              solver_info->linearized_jacobians.rows(), solver_info->linearized_jacobians.cols());
-//    solver.solve(10);
+    solver.solve(10);
 #endif
 
 

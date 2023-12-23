@@ -21,7 +21,9 @@ void ResidualBlockInfo::Evaluate()
     for (int i = 0; i < static_cast<int>(block_sizes.size()); i++)
     {
         jacobians[i].resize(cost_function->num_residuals(), block_sizes[i]);
-        raw_jacobians[i] = jacobians[i].data();//二重指针,是为了配合ceres的形参 double** jacobians，看不懂，给data还能够操作地址？？
+        //二重指针,是为了配合ceres的形参 double** jacobians，看不懂，给data还能够操作地址？？
+        //这里给了地址，下面Evaluate()函数操作了raw_jacobians就相当于操作了jacobians，真正的Jacobian就存到了jacobians中，实在是妙
+        raw_jacobians[i] = jacobians[i].data();
         //dim += block_sizes[i] == 7 ? 6 : block_sizes[i];
     }
     //虚函数，调用的是基类自己实现的Evaluate，即分别是MarginalizationFactor、IMUFactor 和 ProjectionTdFactor(或ProjectionFactor)的Evaluate()函数
@@ -445,6 +447,8 @@ bool MarginalizationFactor::Evaluate(double const *const *parameters, double *re
                 int idx = marginalization_info->keep_block_idx[i] - m;
                 Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> jacobian(jacobians[i], n, size);
                 jacobian.setZero();
+                //这里的 linearized_jacobians 理想情况下应该每次迭代之后就根据△x的新值更新一下，但是VINS-MONO里面没有更新，
+                //只是在每次marginalize()时会去计算一次新的线性化点处的Jacobian，然后就再也不动它了（TODO:FEJ应该解决的是这个问题吧）
                 jacobian.leftCols(local_size) = marginalization_info->linearized_jacobians.middleCols(idx, local_size);
             }
         }
