@@ -844,6 +844,7 @@ void Estimator::optimization()
     std::unordered_map<long, uint8_t> param_addr_check;//所有param维度
     std::unordered_map<long, uint8_t> landmark_addr_check;//landmark维度
     //1.添加边缘化残差（先验部分）
+    size_t size_1=0;
     if (last_marginalization_info)
     {
         // construct new marginlization_factor
@@ -854,19 +855,26 @@ void Estimator::optimization()
 //        /*用于check维度是否正确*/
 //        parameter_block_size[reinterpret_cast<long>(addr)] = size;
         for(int i=0; i<last_marginalization_parameter_blocks.size(); ++i) {
-            //这个地方的landmark没有加到landmark_addr_check中去
-            //没有landmark
             if(last_marginalization_info->parameter_block_size[reinterpret_cast<long>(last_marginalization_parameter_blocks[i])]==1) {
-                landmark_addr_check[reinterpret_cast<long>(last_marginalization_parameter_blocks[i])] = 1;
+                ROS_DEBUG("here have 1 dimend");
+//                landmark_addr_check[reinterpret_cast<long>(last_marginalization_parameter_blocks[i])] = 1;
             }
-
+            size_t tmp_size = last_marginalization_info->parameter_block_size[reinterpret_cast<long>(last_marginalization_parameter_blocks[i])];
+            tmp_size = tmp_size==7 ? 6: tmp_size;
             //这个double*的地址代表的待优化变量的local_size，把每个地址都记录在map中，分配给待优化变量的地址都是连续的
-            for(int j=0; j<last_marginalization_info->parameter_block_size[reinterpret_cast<long>(last_marginalization_parameter_blocks[i])]; ++j) {
+            for(int j=0; j<tmp_size; ++j) {
                 param_addr_check[reinterpret_cast<long>(last_marginalization_parameter_blocks[i]) + (double)j * (long) sizeof(long)] = 1;
-
             }
         }
-        ROS_DEBUG("\nhas prior blocks\n");
+
+        //打印prior的Jacobian维度
+        ROS_DEBUG("\nlinearized_jacobians (rows, cols) = (%lu, %lu)",
+                  last_marginalization_info->linearized_jacobians.rows(), last_marginalization_info->linearized_jacobians.cols());
+
+
+        size_1 = param_addr_check.size();//应该是76  实际87
+        ROS_DEBUG("\nprior size1=%lu, param_addr_check.size() = %lu, landmark size: %lu, except landmark size = %lu",
+                  size_1, param_addr_check.size(), landmark_addr_check.size(), param_addr_check.size()-landmark_addr_check.size());//landmark_addr_check中多加了个td
 
         //大作业T1.a 这里要添加自己的makehessian的代码AddResidualBlockSolver()//类似于marg一样管理所有的factor，只不过，这里的m是WINDOW内所有的landmark，n是所有的P，V，Tbc，td，relopose
         //管理方式也是地址->idx,地址->size一样，在添加的时候指定landmark的drop_set为valid，剩下的为非valid
@@ -888,20 +896,42 @@ void Estimator::optimization()
         problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j]);
 
         //check维度
-        for(int k=0; k<SIZE_POSE; ++k) {
-            param_addr_check[reinterpret_cast<long>(para_Pose[i]) + (long)k * (long)sizeof(long)] = 1;
-        }
-        for(int k=0; k<SIZE_SPEEDBIAS; ++k) {
-            param_addr_check[reinterpret_cast<long>(para_SpeedBias[i]) + (long)k * (long)sizeof(long)] = 1;
-        }
-        for(int k=0; k<SIZE_POSE; ++k) {
-            param_addr_check[reinterpret_cast<long>(para_Pose[j]) + (long)k * (long)sizeof(long)] = 1;
-        }
-        for(int k=0; k<SIZE_SPEEDBIAS; ++k) {
-            param_addr_check[reinterpret_cast<long>(para_SpeedBias[j]) + (long)k * (long)sizeof(long)] = 1;
+        long addr = reinterpret_cast<long>(para_Pose[i]);
+        if(param_addr_check.find(addr) == param_addr_check.end()) {
+            ROS_DEBUG("\nIMU add para_Pose[%d]", i);
+            for(int k=0; k<SIZE_POSE-1; ++k) {
+                param_addr_check[addr + (long)k * (long)sizeof(long)] = 1;
+            }
         }
 
+        addr = reinterpret_cast<long>(para_SpeedBias[i]);
+        if(param_addr_check.find(addr) == param_addr_check.end()) {
+            ROS_DEBUG("\nIMU add para_SpeedBias[%d]", i);
+            for(int k=0; k<SIZE_SPEEDBIAS; ++k) {
+                param_addr_check[addr + (long) k * (long) sizeof(long)] = 1;
+            }
+        }
+
+        addr = reinterpret_cast<long>(para_Pose[j]);
+        if(param_addr_check.find(addr) == param_addr_check.end()) {
+            ROS_DEBUG("\n IMU add para_Pose[%d]", j);
+            for(int k=0; k<SIZE_POSE-1; ++k) {
+                param_addr_check[addr + (long) k * (long) sizeof(long)] = 1;
+            }
+        }
+
+        addr = reinterpret_cast<long>(para_SpeedBias[j]);
+        if(param_addr_check.find(addr) == param_addr_check.end()) {
+            ROS_DEBUG("\n IMU add para_SpeedBias[%d]", j);
+            for (int k = 0; k < SIZE_SPEEDBIAS; ++k) {
+                param_addr_check[addr + (long) k * (long) sizeof(long)] = 1;
+            }
+        }
     }
+    size_t size_2 = param_addr_check.size() - size_1;//应该是81  V2~V10  实际97为啥？？？
+    ROS_DEBUG("\nIMU size2=%lu, param_addr_check.size() = %lu, landmark size: %lu, except landmark size = %lu",
+              size_2, param_addr_check.size(), landmark_addr_check.size(), param_addr_check.size()-landmark_addr_check.size());//landmark_addr_check中多加了个td
+
 
     //3.添加视觉残差
     int f_m_cnt = 0;
@@ -938,13 +968,13 @@ void Estimator::optimization()
                     problem.AddResidualBlock(f_td, loss_function, para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index], para_Td[0]);
 
                     //check维度
-                    for(int k=0; k<SIZE_POSE; ++k) {
+                    for(int k=0; k<SIZE_POSE-1; ++k) {
                         param_addr_check[reinterpret_cast<long>(para_Pose[imu_i]) + (long)k * (long)sizeof(long)] = 1;
                     }
-                    for(int k=0; k<SIZE_POSE; ++k) {
+                    for(int k=0; k<SIZE_POSE-1; ++k) {
                         param_addr_check[reinterpret_cast<long>(para_Pose[imu_j]) + (long)k * (long)sizeof(long)] = 1;
                     }
-                    for(int k=0; k<SIZE_POSE; ++k) {
+                    for(int k=0; k<SIZE_POSE-1; ++k) {
                         param_addr_check[reinterpret_cast<long>(para_Ex_Pose[0]) + (long)k * (long)sizeof(long)] = 1;
                     }
                     param_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
@@ -967,13 +997,13 @@ void Estimator::optimization()
                 problem.AddResidualBlock(f, loss_function, para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]);
 
                 //check维度
-                for(int k=0; k<SIZE_POSE; ++k) {
+                for(int k=0; k<SIZE_POSE-1; ++k) {
                     param_addr_check[reinterpret_cast<long>(para_Pose[imu_i]) + (long)k * (long)sizeof(long)] = 1;
                 }
-                for(int k=0; k<SIZE_POSE; ++k) {
+                for(int k=0; k<SIZE_POSE-1; ++k) {
                     param_addr_check[reinterpret_cast<long>(para_Pose[imu_j]) + (long)k * (long)sizeof(long)] = 1;
                 }
-                for(int k=0; k<SIZE_POSE; ++k) {
+                for(int k=0; k<SIZE_POSE-1; ++k) {
                     param_addr_check[reinterpret_cast<long>(para_Ex_Pose[0]) + (long)k * (long)sizeof(long)] = 1;
                 }
                 param_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
@@ -983,12 +1013,17 @@ void Estimator::optimization()
         }
     }
 
+    size_t size_3 = param_addr_check.size() - size_1 - size_2;//应该和landmark_addr_check.size一样
+    ROS_DEBUG("\nvisual size3=%lu, param_addr_check.size() = %lu, landmark size: %lu, except landmark size = %lu",
+              size_3, param_addr_check.size(), landmark_addr_check.size(), param_addr_check.size()-landmark_addr_check.size());//landmark_addr_check中多加了个td
+
     ROS_DEBUG("visual measurement count: %d", f_m_cnt);//总的视觉观测个数，观测可能是在不同帧对同一个landmark进行观测，所以可能查过1000，注意与landmark个数进行区分
     ROS_DEBUG("prepare for ceres: %f", t_prepare.toc());
     //4.添加闭环检测残差，计算滑动窗口中与每一个闭环关键帧的相对位姿，这个相对位置是为后面的图优化(pose graph)准备 或者是 快速重定位(崔华坤PDF7.2节)
     //这里注意relo_pose是Tw2_bi = Tw2_w1 * Tw1_bi
     if(relocalization_info)
     {
+        ROS_DEBUG("\nhas relocation blocks");
         //printf("set relocalization factor! \n");
         ceres::LocalParameterization *local_parameterization = new PoseLocalParameterization();
         problem.AddParameterBlock(relo_Pose, SIZE_POSE, local_parameterization);
@@ -1021,34 +1056,32 @@ void Estimator::optimization()
                     retrive_feature_index++;
 
                     //check维度
-                    for(int k=0; k<SIZE_POSE; ++k) {
+                    for(int k=0; k<SIZE_POSE-1; ++k) {
                         param_addr_check[reinterpret_cast<long>(para_Pose[start]) + (long)k * (long)sizeof(long)] = 1;
                     }
-                    for(int k=0; k<SIZE_POSE; ++k) {
+                    for(int k=0; k<SIZE_POSE-1; ++k) {
                         param_addr_check[reinterpret_cast<long>(relo_Pose) + (long)k * (long)sizeof(long)] = 1;
                     }
-                    for(int k=0; k<SIZE_POSE; ++k) {
+                    for(int k=0; k<SIZE_POSE-1; ++k) {
                         param_addr_check[reinterpret_cast<long>(para_Ex_Pose[0]) + (long)k * (long)sizeof(long)] = 1;
                     }
                     param_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
                     landmark_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
-
-                    ROS_DEBUG("\nhas relocation blocks\n");
                 }     
             }
         }
     }
-
-    ROS_DEBUG("\nfinal param_addr_check.size() = %lu, landmark size: %lu, except landmark size = %lu\n",
-              param_addr_check.size(), landmark_addr_check.size(), param_addr_check.size()-landmark_addr_check.size()+1);//landmark_addr_check中多加了个td
+    size_t size_4 = param_addr_check.size() - size_1 - size_2 - size_3;//没有loop时应该为0
+    ROS_DEBUG("\nrelocation size_4=%lu, param_addr_check.size() = %lu, landmark size: %lu, except landmark size = %lu",
+              size_4, param_addr_check.size(), landmark_addr_check.size(), param_addr_check.size()-landmark_addr_check.size());//landmark_addr_check中多加了个td
 
 
     ceres::Solver::Options options;
 
     options.linear_solver_type = ceres::DENSE_SCHUR;
     //options.num_threads = 2;
-//    options.trust_region_strategy_type = ceres::DOGLEG;//狗腿算法，与LM较为接近
-    options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;//LM
+    options.trust_region_strategy_type = ceres::DOGLEG;//狗腿算法，与LM较为接近
+//    options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;//LM
     options.max_num_iterations = NUM_ITERATIONS;
     //options.use_explicit_schur_complement = true;
     //options.minimizer_progress_to_stdout = true;

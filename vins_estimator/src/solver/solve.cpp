@@ -6,6 +6,7 @@
 
 #include "solve.h"
 
+//关于变量地址管理之类的可以直接搬marg的
 
 namespace lm_strategy{
 

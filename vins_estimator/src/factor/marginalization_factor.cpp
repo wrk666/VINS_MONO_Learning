@@ -135,7 +135,7 @@ void MarginalizationInfo::preMarginalize()
     ROS_DEBUG("factors size=%lu, landmark size=%lu", factors.size(), factors.size()-2); //始于[0]帧的landmark
     for (auto it : factors)
     {
-        ROS_INFO_STREAM("\nin preMarginalize i: "<< ++i);  //很大，能到900多，说明[0]观测到了很多landmark
+//        ROS_INFO_STREAM("\nin preMarginalize i: "<< ++i);  //很大，能到900多，说明[0]观测到了很多landmark
         it->Evaluate();//计算每个factor的residual和Jacobian
         std::vector<int> block_sizes = it->cost_function->parameter_block_sizes(); //residual总维度，先验=last n=76，IMU=15，Visual=2
         for (int i = 0; i < static_cast<int>(block_sizes.size()); i++)
