@@ -643,9 +643,9 @@ void Estimator::double2vector()
     }
     //窗口第一帧优化后的位姿 q(wxyz)
     Vector3d origin_R00 = Utility::R2ypr(Quaterniond(para_Pose[0][6],
-                                                      para_Pose[0][3],
-                                                      para_Pose[0][4],
-                                                      para_Pose[0][5]).toRotationMatrix());
+                                                     para_Pose[0][3],
+                                                     para_Pose[0][4],
+                                                     para_Pose[0][5]).toRotationMatrix());
     //(R_before_after).yaw（转到被减，变换到before）
     //TODO：确定到底是哪个  若是R_after_before.x()则下面使用rot_diff做的矫正就不对了,para_Pose肯定是after的
     double y_diff = origin_R0.x() - origin_R00.x();
@@ -664,10 +664,10 @@ void Estimator::double2vector()
     {
 
         Rs[i] = rot_diff * Quaterniond(para_Pose[i][6], para_Pose[i][3], para_Pose[i][4], para_Pose[i][5]).normalized().toRotationMatrix();
-        
+
         Ps[i] = rot_diff * Vector3d(para_Pose[i][0] - para_Pose[0][0],
-                                para_Pose[i][1] - para_Pose[0][1],
-                                para_Pose[i][2] - para_Pose[0][2]) + origin_P0;
+                                    para_Pose[i][1] - para_Pose[0][1],
+                                    para_Pose[i][2] - para_Pose[0][2]) + origin_P0;
 
         Vs[i] = rot_diff * Vector3d(para_SpeedBias[i][0],
                                     para_SpeedBias[i][1],
@@ -742,7 +742,7 @@ void Estimator::double2vector()
         //cout << "vins relo " << endl;
         //cout << "vins relative_t " << relo_relative_t.transpose() << endl;
         //cout << "vins relative_yaw " <<relo_relative_yaw << endl;
-        relocalization_info = 0;    
+        relocalization_info = 0;
 
     }
 }
@@ -783,7 +783,7 @@ bool Estimator::failureDetection()
     if (abs(tmp_P.z() - last_P.z()) > 1)
     {
         ROS_INFO(" big z translation");
-        return true; 
+        return true;
     }
     //relative pose过大则fail
     //求误差的角度大小，对四元数表示的旋转，delta q有
@@ -1151,7 +1151,7 @@ void Estimator::optimization()
     //多线程计算在X0处的整个先验项的参数块，雅可比矩阵和残差值
     //5、多线程构造先验项舒尔补AX=b的结构，在X0处线性化计算Jacobian和残差
     TicToc t_margin;
-    solver_info->marginalize();
+    solver_info->marginalizeSolve();
     ROS_DEBUG("solver_info marginalization %f ms", t_margin.toc());
     ROS_DEBUG("\nsolver_info linearized_jacobians (rows, cols) = (%lu, %lu)",
               solver_info->linearized_jacobians.rows(), solver_info->linearized_jacobians.cols());

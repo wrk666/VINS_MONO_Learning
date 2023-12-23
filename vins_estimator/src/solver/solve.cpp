@@ -217,9 +217,9 @@ void* ThreadsConstructA(void* threadsstruct)
 }
 
 
-void SolverInfo::marginalize()
+void SolverInfo::marginalizeSolve()
 {
-    int pos = 0;
+    int pos = 0;//Hessian矩阵整体维度
     //it.first是要被marg掉的变量的地址,将其size累加起来就得到了所有被marg的变量的总localSize=m
     //marg的放一起，共m维，remain放一起，共n维
     for (auto &it : parameter_block_idx)
@@ -245,7 +245,7 @@ void SolverInfo::marginalize()
     n = pos - m;//remain变量的总维度，这样写建立了n和m间的关系，表意更强
     ROS_DEBUG("\nn: %d, tmp_n: %d", n, tmp_n);
 
-    ROS_DEBUG("SolverInfo, pos: %d, m: %d, n: %d, size: %d", pos, m, n, (int)parameter_block_idx.size());
+    ROS_DEBUG("\nSolverInfo, pos: %d, m: %d, n: %d, size: %d", pos, m, n, (int)parameter_block_idx.size());
 
     TicToc t_summing;
     Eigen::MatrixXd A(pos, pos);//总系数矩阵
@@ -335,7 +335,12 @@ ROS_INFO("summing up costs %f ms", t_summing.toc());*/
     Eigen::MatrixXd Amm = 0.5 * (A.block(0, 0, m, m) + A.block(0, 0, m, m).transpose());
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes(Amm);
 
-    //ROS_ASSERT_MSG(saes.eigenvalues().minCoeff() >= -1e-4, "min eigenvalue %f", saes.eigenvalues().minCoeff());
+    //这个1e-4应该是个经验值，不懂数值稳定性，暂不研究
+    ROS_ASSERT_MSG(saes.eigenvalues().minCoeff() >= -1e-4, "min eigenvalue %f", saes.eigenvalues().minCoeff());
+    size_t tmp_size = saes.eigenvalues().size();
+    ROS_DEBUG("\nhere saes min eigenvalue: %f, saes.eigenvalues.size():%lu, sigma3: %f, sigma4: %f,  sigma4/sigma3=%f",
+              saes.eigenvalues().minCoeff(), tmp_size, saes.eigenvalues()(tmp_size-2), saes.eigenvalues()(tmp_size-1),
+              saes.eigenvalues()(tmp_size-1)/saes.eigenvalues()(tmp_size-2));
 
     //marg的矩阵块求逆,特征值分解求逆更快
     Eigen::MatrixXd Amm_inv = saes.eigenvectors()
@@ -352,7 +357,6 @@ ROS_INFO("summing up costs %f ms", t_summing.toc());*/
     A = Arr - Arm * Amm_inv * Amr;
     b = brr - Arm * Amm_inv * bmm;
 
-
     //由于Ceres里面不能直接操作信息矩阵，所以这里从信息矩阵中反解出来了Jacobian和residual，而g2o是可以的，ceres里只需要维护H和b
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes2(A);
     //对称阵
@@ -366,11 +370,6 @@ ROS_INFO("summing up costs %f ms", t_summing.toc());*/
     //从H和b中反解出线性化的Jacobian和residual值(可看第5篇博客5.2.2节)
     linearized_jacobians = S_sqrt.asDiagonal() * saes2.eigenvectors().transpose();
     linearized_residuals = S_inv_sqrt.asDiagonal() * saes2.eigenvectors().transpose() * b;
-    //std::cout << A << std::endl
-    //          << std::endl;
-    //std::cout << linearized_jacobians << std::endl;
-    //printf("error2: %f %f\n", (linearized_jacobians.transpose() * linearized_jacobians - A).sum(),
-    //      (linearized_jacobians.transpose() * linearized_residuals - b).sum());
 
 
     //求解Hx=b，marg不用求出△x，所以不用对方程组求解，但是优化时需要求解出整个△x
@@ -384,19 +383,31 @@ ROS_INFO("summing up costs %f ms", t_summing.toc());*/
     Eigen::MatrixXd tmpA_solver = Arm_solver * Amm_inv_solver;
 
     //step1: Schur补
-    MatXX Arr_schur = Arr_solver - tmpA_solver * Amr_solver;
-    VecX brr_schur = brr - tmpA_solver * bmm_solver;
+    Eigen::MatrixXd Arr_schur = Arr_solver - tmpA_solver * Amr_solver;
+    Eigen::VectorXd brr_schur = brr - tmpA_solver * bmm_solver;
+
+    ROS_DEBUG("here1");
 
     // step2: solve Hpp * delta_x = bpp
-    //TODO：没有lambda，不知道怎么用PCG solver来求解△xrr，先用上面的SVD求逆方法
+    //1 TODO：没有lambda，不知道怎么用PCG solver来求解△xrr，先用上面的SVD求逆方法，
+    //2 TODO：数值稳定性目前不懂，先不assert看看会有什么效果
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes_solver(Arr_schur);
-    ROS_ASSERT_MSG(saes_solver.eigenvalues().minCoeff() >= -1e-4, "min eigenvalue %f", saes_solver.eigenvalues().minCoeff());
+//    ROS_ASSERT_MSG(saes_solver.eigenvalues().minCoeff() >= -1e-4, "min eigenvalue %f", saes_solver.eigenvalues().minCoeff());
     Eigen::MatrixXd Arr_schur_inv = saes_solver.eigenvectors()
                               * Eigen::VectorXd((saes_solver.eigenvalues().array() > eps).select(saes_solver.eigenvalues().array().inverse(), 0)).asDiagonal()
                               * saes_solver.eigenvectors().transpose();
-    delta_x_rr_ = Amm_inv_solver * brr_schur;
+    //这个可能会崩，不知道为啥
+//    tmp_size = saes_solver.eigenvalues().size();
+//    ROS_DEBUG("\nhere saes_solver min eigenvalue: %f, saes.eigenvalues.size():%lu, sigma3: %f, sigma4: %f,  sigma4/sigma3=%f",
+//              saes_solver.eigenvalues().minCoeff(), tmp_size, saes.eigenvalues()(tmp_size-2), saes_solver.eigenvalues()(tmp_size-1),
+//              saes_solver.eigenvalues()(tmp_size-1)/saes_solver.eigenvalues()(tmp_size-2));
+
+    ROS_DEBUG("here2");
+
+    delta_x_rr_ = Arr_schur_inv * brr_schur;
     delta_x_mm_ = Amm_inv_solver * (bmm_solver - Amr_solver * delta_x_rr_);
     //求解完成，可以进入LM evaluation ρ！
+    ROS_DEBUG("here3");
 }
 
 std::vector<double *> SolverInfo::getParameterBlocks(std::unordered_map<long, double *> &addr_shift)

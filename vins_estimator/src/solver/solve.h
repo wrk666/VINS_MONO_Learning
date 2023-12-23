@@ -61,7 +61,7 @@ public:
     int globalSize(int size) const;
     void addResidualBlockInfo(ResidualBlockInfo *residual_block_info);//加残差块相关信息(优化变量、待marg的变量)
     void preMarginalize();//计算每个残差对应的Jacobian，并更新parameter_block_data
-    void marginalize();//pos为所有变量维度，m为需要marg掉的变量，n为需要保留的变量
+    void marginalizeSolve();//pos为所有变量维度，m为需要marg掉的变量，n为需要保留的变量
     std::vector<double *> getParameterBlocks(std::unordered_map<long, double *> &addr_shift);
 
     std::vector<ResidualBlockInfo *> factors;//所有观测项
