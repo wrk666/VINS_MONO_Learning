@@ -1,6 +1,8 @@
 #include "estimator.h"
 #include "solver/solve.h"
 
+#define CERES_SOLVE
+
 Estimator::Estimator(): f_manager{Rs}
 {
     ROS_INFO("init begins");
@@ -806,13 +808,11 @@ bool Estimator::failureDetection()
 //在最后求解出整个delta x，在solve中用LM评估迭代效果并继续迭代
 void Estimator::optimization()
 {
-    ceres::Problem problem;
     ceres::LossFunction *loss_function;
     //loss_function = new ceres::HuberLoss(1.0);//Huber损失函数
     loss_function = new ceres::CauchyLoss(1.0);//柯西损失函数
-
-    solver::SolverInfo *solver_info = new solver::SolverInfo();
-
+#ifdef CERES_SOLVE
+    ceres::Problem problem;
     //添加ceres参数块
     //因为ceres用的是double数组，所以在下面用vector2double做类型装换
     //Ps、Rs转变成para_Pose，Vs、Bas、Bgs转变成para_SpeedBias
@@ -843,6 +843,14 @@ void Estimator::optimization()
         //problem.SetParameterBlockConstant(para_Td[0]);
     }
 
+//#else
+    //自己写的solver如何固定住外参呢？
+    solver::SolverInfo *solver_info = new solver::SolverInfo();
+    solver::Solver solver;
+#endif
+
+
+
     TicToc t_whole, t_prepare;
     vector2double();
 
@@ -855,14 +863,10 @@ void Estimator::optimization()
     {
         // construct new marginlization_factor
         MarginalizationFactor *marginalization_factor = new MarginalizationFactor(last_marginalization_info);//里面设置了上次先验的什么size，现在还不懂
+
+#ifdef CERES_SOLVE
         problem.AddResidualBlock(marginalization_factor, NULL,
                                  last_marginalization_parameter_blocks);
-
-        //dropset用于指定求解时需要Schur消元的变量，即landmark
-        vector<int> drop_set = {};
-        ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(marginalization_factor, NULL,
-                                                                       last_marginalization_parameter_blocks,
-                                                                       drop_set);
 
 //        /*用于check维度是否正确*/
         for(int i=0; i<last_marginalization_parameter_blocks.size(); ++i) {
@@ -882,10 +886,13 @@ void Estimator::optimization()
         ROS_DEBUG("\nprior size1=%lu, param_addr_check.size() = %lu, landmark size: %lu, except landmark size = %lu",
                   size_1, param_addr_check.size(), landmark_addr_check.size(), param_addr_check.size()-landmark_addr_check.size());//landmark_addr_check中多加了个td
 
-
-//        ROS_DEBUG("last_marginalization_parameter_blocks[0] long addr: %ld, [1] long addr:%ld",
-//                  reinterpret_cast<long>(last_marginalization_parameter_blocks[0]),
-//                  reinterpret_cast<long>(last_marginalization_parameter_blocks[1]));
+//#else
+        //dropset用于指定求解时需要Schur消元的变量，即landmark
+        solver::ResidualBlockInfo *residual_block_info = new solver::ResidualBlockInfo(marginalization_factor, NULL,
+                                                                       last_marginalization_parameter_blocks,
+                                                                                       vector<int>{});
+        solver_info->addResidualBlockInfo(residual_block_info);
+#endif
     }
 
     //2.添加IMU残差
@@ -896,6 +903,8 @@ void Estimator::optimization()
         if (pre_integrations[j]->sum_dt > 10.0)
             continue;
         IMUFactor* imu_factor = new IMUFactor(pre_integrations[j]);//这里的factor就是残差residual，ceres里面叫factor
+
+#ifdef CERES_SOLVE
         problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j]);
 
         //check维度
@@ -930,11 +939,19 @@ void Estimator::optimization()
                 param_addr_check[addr + (long) k * (long) sizeof(long)] = 1;
             }
         }
+//#else
+        solver::ResidualBlockInfo *residual_block_info =
+                new solver::ResidualBlockInfo(imu_factor, NULL,
+                                              vector<double *>{para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j]},
+                                              vector<int>{});
+        solver_info->addResidualBlockInfo(residual_block_info);
+#endif
     }
+#ifdef CERES_SOLVE
     size_t size_2 = param_addr_check.size() - size_1;//应该是81  V2~V10  实际97为啥？？？
     ROS_DEBUG("\nIMU size2=%lu, param_addr_check.size() = %lu, landmark size: %lu, except landmark size = %lu",
               size_2, param_addr_check.size(), landmark_addr_check.size(), param_addr_check.size()-landmark_addr_check.size());//landmark_addr_check中多加了个td
-
+#endif
 
     //3.添加视觉残差
     int f_m_cnt = 0;
@@ -968,6 +985,7 @@ void Estimator::optimization()
                     ProjectionTdFactor *f_td = new ProjectionTdFactor(pts_i, pts_j, it_per_id.feature_per_frame[0].velocity, it_per_frame.velocity,
                                                                      it_per_id.feature_per_frame[0].cur_td, it_per_frame.cur_td,
                                                                      it_per_id.feature_per_frame[0].uv.y(), it_per_frame.uv.y());
+#ifdef CERES_SOLVE
                     problem.AddResidualBlock(f_td, loss_function, para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index], para_Td[0]);
 
                     //check维度
@@ -993,12 +1011,18 @@ void Estimator::optimization()
                     para[4] = para_Td[0];
                     f_td->check(para);
                     */
+//#else
+                solver::ResidualBlockInfo *residual_block_info = new solver::ResidualBlockInfo(f_td, loss_function,
+                                                                                vector<double*>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index], para_Td[0]},
+                                                                                               vector<int>{3});
+                solver_info->addResidualBlockInfo(residual_block_info);
+#endif
             }
             else
             {
                 ProjectionFactor *f = new ProjectionFactor(pts_i, pts_j);
+#ifdef CERES_SOLVE
                 problem.AddResidualBlock(f, loss_function, para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]);
-
                 //check维度
                 for(int k=0; k<SIZE_POSE-1; ++k) {
                     param_addr_check[reinterpret_cast<long>(para_Pose[imu_i]) + (long)k * (long)sizeof(long)] = 1;
@@ -1011,15 +1035,22 @@ void Estimator::optimization()
                 }
                 param_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
                 landmark_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
+//#else
+                solver::ResidualBlockInfo *residual_block_info = new solver::ResidualBlockInfo(f, loss_function,
+                                                                                vector<double*>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]},
+                                                                                               vector<int>{3});
+                solver_info->addResidualBlockInfo(residual_block_info);
+#endif
             }
             f_m_cnt++;
         }
     }
 
+#ifdef CERES_SOLVE
     size_t size_3 = param_addr_check.size() - size_1 - size_2;//应该和landmark_addr_check.size一样
     ROS_DEBUG("\nvisual size3=%lu, param_addr_check.size() = %lu, landmark size: %lu, except landmark size = %lu",
               size_3, param_addr_check.size(), landmark_addr_check.size(), param_addr_check.size()-landmark_addr_check.size());//landmark_addr_check中多加了个td
-
+#endif
     ROS_DEBUG("visual measurement count: %d", f_m_cnt);//总的视觉观测个数，观测可能是在不同帧对同一个landmark进行观测，所以可能查过1000，注意与landmark个数进行区分
     ROS_DEBUG("prepare for ceres: %f", t_prepare.toc());
     //4.添加闭环检测残差，计算滑动窗口中与每一个闭环关键帧的相对位姿，这个相对位置是为后面的图优化(pose graph)准备 或者是 快速重定位(崔华坤PDF7.2节)
@@ -1028,8 +1059,10 @@ void Estimator::optimization()
     {
         ROS_DEBUG("\nhas relocation blocks");
         //printf("set relocalization factor! \n");
+#ifdef CERES_SOLVE
         ceres::LocalParameterization *local_parameterization = new PoseLocalParameterization();
         problem.AddParameterBlock(relo_Pose, SIZE_POSE, local_parameterization);
+#endif
         int retrive_feature_index = 0;
         int feature_index = -1;
         for (auto &it_per_id : f_manager.feature)
@@ -1055,8 +1088,8 @@ void Estimator::optimization()
                     
                     ProjectionFactor *f = new ProjectionFactor(pts_i, pts_j);
                     //relo_Pose是Tw2_bi
+#ifdef CERES_SOLVE
                     problem.AddResidualBlock(f, loss_function, para_Pose[start], relo_Pose, para_Ex_Pose[0], para_Feature[feature_index]);
-                    retrive_feature_index++;
 
                     //check维度
                     for(int k=0; k<SIZE_POSE-1; ++k) {
@@ -1070,10 +1103,18 @@ void Estimator::optimization()
                     }
                     param_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
                     landmark_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
+//#else
+                    solver::ResidualBlockInfo *residual_block_info = new solver::ResidualBlockInfo(f, loss_function,
+                                                                                                   vector<double*>{para_Pose[start], relo_Pose, para_Ex_Pose[0], para_Feature[feature_index]},
+                                                                                                   vector<int>{3});
+                    solver_info->addResidualBlockInfo(residual_block_info);
+#endif
+                    retrive_feature_index++;
                 }     
             }
         }
     }
+#ifdef CERES_SOLVE
     size_t size_4 = param_addr_check.size() - size_1 - size_2 - size_3;//没有loop时应该为0
     ROS_DEBUG("\nrelocation size_4=%lu, param_addr_check.size() = %lu, landmark size: %lu, except landmark size = %lu",
               size_4, param_addr_check.size(), landmark_addr_check.size(), param_addr_check.size()-landmark_addr_check.size());//landmark_addr_check中多加了个td
@@ -1101,6 +1142,23 @@ void Estimator::optimization()
     //cout << summary.BriefReport() << endl;
     ROS_DEBUG("Iterations : %d", static_cast<int>(summary.iterations.size()));
     ROS_DEBUG("solver costs: %f", t_solver.toc());
+//#else //手写求解器求解
+
+    TicToc t_pre_margin;
+    solver_info->preMarginalize();
+    ROS_DEBUG("solver_info pre marginalization %f ms", t_pre_margin.toc());
+
+    //多线程计算在X0处的整个先验项的参数块，雅可比矩阵和残差值
+    //5、多线程构造先验项舒尔补AX=b的结构，在X0处线性化计算Jacobian和残差
+    TicToc t_margin;
+    solver_info->marginalize();
+    ROS_DEBUG("solver_info marginalization %f ms", t_margin.toc());
+    ROS_DEBUG("\nsolver_info linearized_jacobians (rows, cols) = (%lu, %lu)",
+              solver_info->linearized_jacobians.rows(), solver_info->linearized_jacobians.cols());
+//    solver.solve(10);
+#endif
+
+
 
     // 防止优化结果在零空间变化，通过固定第一帧的位姿(如何固定，free，gauge，fix？)
     double2vector();
