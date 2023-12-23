@@ -1,4 +1,5 @@
 #include "estimator.h"
+#include "solver/solve.h"
 
 Estimator::Estimator(): f_manager{Rs}
 {
@@ -800,12 +801,17 @@ bool Estimator::failureDetection()
 }
 
 //后端非线性优化
+//大作业T1.a思路 这里要添加自己的makehessian的代码AddResidualBlockSolver()//类似于marg一样管理所有的factor，只不过，这里的m是WINDOW内所有的landmark，n是所有的P，V，Tbc，td，relopose
+//管理方式也是地址->idx,地址->size一样，在添加的时候指定landmark的drop_set为valid，剩下的为非valid
+//在最后求解出整个delta x，在solve中用LM评估迭代效果并继续迭代
 void Estimator::optimization()
 {
     ceres::Problem problem;
     ceres::LossFunction *loss_function;
     //loss_function = new ceres::HuberLoss(1.0);//Huber损失函数
     loss_function = new ceres::CauchyLoss(1.0);//柯西损失函数
+
+    solver::SolverInfo *solver_info = new solver::SolverInfo();
 
     //添加ceres参数块
     //因为ceres用的是double数组，所以在下面用vector2double做类型装换
@@ -852,13 +858,14 @@ void Estimator::optimization()
         problem.AddResidualBlock(marginalization_factor, NULL,
                                  last_marginalization_parameter_blocks);
 
+        //dropset用于指定求解时需要Schur消元的变量，即landmark
+        vector<int> drop_set = {};
+        ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(marginalization_factor, NULL,
+                                                                       last_marginalization_parameter_blocks,
+                                                                       drop_set);
+
 //        /*用于check维度是否正确*/
-//        parameter_block_size[reinterpret_cast<long>(addr)] = size;
         for(int i=0; i<last_marginalization_parameter_blocks.size(); ++i) {
-            if(last_marginalization_info->parameter_block_size[reinterpret_cast<long>(last_marginalization_parameter_blocks[i])]==1) {
-                ROS_DEBUG("here have 1 dimend");
-//                landmark_addr_check[reinterpret_cast<long>(last_marginalization_parameter_blocks[i])] = 1;
-            }
             size_t tmp_size = last_marginalization_info->parameter_block_size[reinterpret_cast<long>(last_marginalization_parameter_blocks[i])];
             tmp_size = tmp_size==7 ? 6: tmp_size;
             //这个double*的地址代表的待优化变量的local_size，把每个地址都记录在map中，分配给待优化变量的地址都是连续的
@@ -871,14 +878,10 @@ void Estimator::optimization()
         ROS_DEBUG("\nlinearized_jacobians (rows, cols) = (%lu, %lu)",
                   last_marginalization_info->linearized_jacobians.rows(), last_marginalization_info->linearized_jacobians.cols());
 
-
         size_1 = param_addr_check.size();//应该是76  实际87
         ROS_DEBUG("\nprior size1=%lu, param_addr_check.size() = %lu, landmark size: %lu, except landmark size = %lu",
                   size_1, param_addr_check.size(), landmark_addr_check.size(), param_addr_check.size()-landmark_addr_check.size());//landmark_addr_check中多加了个td
 
-        //大作业T1.a 这里要添加自己的makehessian的代码AddResidualBlockSolver()//类似于marg一样管理所有的factor，只不过，这里的m是WINDOW内所有的landmark，n是所有的P，V，Tbc，td，relopose
-        //管理方式也是地址->idx,地址->size一样，在添加的时候指定landmark的drop_set为valid，剩下的为非valid
-        //在最后求解出整个delta x，在solve中用LM评估迭代效果并继续迭代
 
 //        ROS_DEBUG("last_marginalization_parameter_blocks[0] long addr: %ld, [1] long addr:%ld",
 //                  reinterpret_cast<long>(last_marginalization_parameter_blocks[0]),

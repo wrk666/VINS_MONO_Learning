@@ -8,7 +8,7 @@
 
 //关于变量地址管理之类的可以直接搬marg的
 
-namespace lm_strategy{
+namespace solver{
 
     bool Solve::solve(int iterations) {
 
