@@ -296,7 +296,7 @@ void process()
                     double dt_1 = img_t - current_time;
                     double dt_2 = t - img_t;
                     current_time = img_t;
-                    ROS_ASSERT(dt_1 >= 0);
+                    ROS_ASSERT(dt_1 >= 0);//这出错了
                     ROS_ASSERT(dt_2 >= 0);
                     ROS_ASSERT(dt_1 + dt_2 > 0);
                     double w1 = dt_2 / (dt_1 + dt_2);

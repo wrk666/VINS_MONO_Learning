@@ -667,7 +667,8 @@ void Solver::computeLambdaInitLM() {
     for (ulong i = 0; i < size; ++i) {
         maxDiagonal = std::max(fabs(Hessian_(i, i)), maxDiagonal);//取H矩阵的最大值，然后*涛
     }
-    double tau = 1e-5;
+//    double tau = 1e-5;
+    double tau = 1e-7;//减小一点让λ初始化稍微大一点
     currentLambda_ = tau * maxDiagonal;
     ROS_DEBUG_STREAM("\nin computeLambdaInitLM currentChi_= " << currentChi_
                     << ",  init currentLambda_=" << currentLambda_
