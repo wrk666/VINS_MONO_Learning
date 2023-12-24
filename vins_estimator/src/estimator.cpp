@@ -1053,6 +1053,8 @@ void Estimator::optimization()
 #endif
     ROS_DEBUG("visual measurement count: %d", f_m_cnt);//总的视觉观测个数，观测可能是在不同帧对同一个landmark进行观测，所以可能查过1000，注意与landmark个数进行区分
     ROS_DEBUG("prepare for ceres: %f", t_prepare.toc());
+
+
     //4.添加闭环检测残差，计算滑动窗口中与每一个闭环关键帧的相对位姿，这个相对位置是为后面的图优化(pose graph)准备 或者是 快速重定位(崔华坤PDF7.2节)
     //这里注意relo_pose是Tw2_bi = Tw2_w1 * Tw1_bi
     if(relocalization_info)
@@ -1121,7 +1123,6 @@ void Estimator::optimization()
 
 
     ceres::Solver::Options options;
-
     options.linear_solver_type = ceres::DENSE_SCHUR;
     //options.num_threads = 2;
     options.trust_region_strategy_type = ceres::DOGLEG;//狗腿算法，与LM较为接近
@@ -1142,6 +1143,7 @@ void Estimator::optimization()
     //cout << summary.BriefReport() << endl;
     ROS_DEBUG("Iterations : %d", static_cast<int>(summary.iterations.size()));
     ROS_DEBUG("solver costs: %f", t_solver.toc());
+
 //#else //手写求解器求解
     solver.solve(10);
 #endif

@@ -319,6 +319,14 @@ void MarginalizationInfo::marginalize()
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes(Amm);
 
     //ROS_ASSERT_MSG(saes.eigenvalues().minCoeff() >= -1e-4, "min eigenvalue %f", saes.eigenvalues().minCoeff());
+    size_t tmp_size = saes.eigenvalues().size();
+    ROS_DEBUG("\nin marginalize saes min eigenvalue: %e, max eigenvalue: %e, "
+              "saes.eigenvalues.size():%lu, sigma3: %e, sigma4: %e,  sigma4/sigma3=%f",
+              saes.eigenvalues().minCoeff(), saes.eigenvalues().maxCoeff(),
+              tmp_size, saes.eigenvalues()(tmp_size-2), saes.eigenvalues()(tmp_size-1),
+              saes.eigenvalues()(tmp_size-1)/saes.eigenvalues()(tmp_size-2));
+    ROS_DEBUG_STREAM("\nin marginalize saes.eigenvalues(): " << saes.eigenvalues().transpose());
+
 
     //marg的矩阵块求逆,特征值分解求逆更快
     Eigen::MatrixXd Amm_inv = saes.eigenvectors()
@@ -347,7 +355,8 @@ void MarginalizationInfo::marginalize()
     Eigen::VectorXd S_sqrt = S.cwiseSqrt();//开根号
     Eigen::VectorXd S_inv_sqrt = S_inv.cwiseSqrt();
 
-    //从H和b中反解出Jacobian和residual(可看第5篇博客5.2.2节)
+    //从H和b中反解出Jacobian和residual(可看第5篇博客5.2.2节),
+    //TODO：但是这里面解不出来Jacobian里面耦合的sqrt_info，且计算先验的residual对应的cost时使用residual的norm，而不是e^Te，没弄明白为啥
     linearized_jacobians = S_sqrt.asDiagonal() * saes2.eigenvectors().transpose();
     linearized_residuals = S_inv_sqrt.asDiagonal() * saes2.eigenvectors().transpose() * b;
     //std::cout << A << std::endl

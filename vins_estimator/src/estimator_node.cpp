@@ -13,7 +13,7 @@
 #include "utility/visualization.h"
 
 
-Estimator estimator;
+Estimator estimator;//全局变量，存放于静态内存区
 
 std::condition_variable con;//条件变量，在完成将msg放入buf的操作后唤醒作用于process线程中的获取观测值数据的函数。
 double current_time = -1;

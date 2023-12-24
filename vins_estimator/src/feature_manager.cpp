@@ -344,7 +344,7 @@ void FeatureManager::removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3
                 else
                     it->estimated_depth = INIT_DEPTH;
             }
-            ROS_DEBUG("feature id: %d, start_frame: %d, tracking_size: %lu",it->feature_id, it->start_frame, it->feature_per_frame.size());
+//            ROS_DEBUG("feature id: %d, start_frame: %d, tracking_size: %lu",it->feature_id, it->start_frame, it->feature_per_frame.size());
         }
         // remove tracking-lost feature after marginalize
         /*

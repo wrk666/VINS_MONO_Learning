@@ -14,6 +14,7 @@
 
 #include "eigen_types.h"
 #include "../utility/tic_toc.h"
+#include "../parameters.h"
 
 namespace solver {
 
@@ -55,7 +56,7 @@ struct ThreadsStruct
 class Solver
 {
 public:
-    //未显式定义构造函数，使用到该类时，编译器才会生成默认构造函数
+    Solver():mem_allocated_(false){};
     ~Solver();
     int localSize(int size) const;
     int globalSize(int size) const;
@@ -71,6 +72,7 @@ public:
     int sum_block_size;
     std::unordered_map<long, int> parameter_block_idx; //local size 排序前是<待边缘化的优化变量内存地址,在parameter_block_size中的id>，排序后是<marg, id>m维  <remain, id>n维
     std::unordered_map<long, double *> parameter_block_data;//<优化变量内存地址,数据>
+    std::unordered_map<long, double *> parameter_block_data_backup;//<优化变量内存地址,数据>
 
     std::vector<int> keep_block_size; //global size
     std::vector<int> keep_block_idx;  //local size
@@ -82,8 +84,10 @@ public:
 
     bool solve(int iterations);
     void solveLinearSystem();/// 解线性方程
-    void updateStates();/// 更新状态变量
-    void rollbackStates(); // 有时候 update 后残差会变大，需要退回去，重来
+    bool updateStates();/// 更新状态变量
+    bool backupStates();//回滚状态变量
+    bool rollbackStates(); // 有时候 update 后残差会变大，需要退回去，重来
+    double computeChi() const;
     void computeLambdaInitLM();/// 计算LM算法的初始Lambda
     void addLambdatoHessianLM();/// Hessian 对角线加上或者减去  Lambda
     void removeLambdaHessianLM();
@@ -104,8 +108,16 @@ public:
 
     /// 整个信息矩阵
     Eigen::MatrixXd Hessian_;
-    Eigen::MatrixXd b_;
-    Eigen::MatrixXd delta_x_;
+    Eigen::VectorXd b_;
+    Eigen::VectorXd delta_x_;
+
+    //多留100的余量，这个是成员变量，在程序中是局部变量，放在栈区，不需要手动释放内存，因为它会在其作用域结束时自动被销毁
+    double delta_x_array_[1000 + (WINDOW_SIZE + 1) * (SIZE_POSE + SIZE_SPEEDBIAS) + SIZE_POSE + 1 + 100];
+
+    //是否已调用preMakeHessian分配过内存
+    bool mem_allocated_;
+
+
 };
 
 
