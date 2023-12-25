@@ -1,7 +1,7 @@
 #include "estimator.h"
 #include "solver/solve.h"
 
-#define CERES_SOLVE
+//#define CERES_SOLVE
 
 Estimator::Estimator(): f_manager{Rs}
 {
@@ -843,7 +843,7 @@ void Estimator::optimization()
         //problem.SetParameterBlockConstant(para_Td[0]);
     }
 
-//#else
+#else
     //自己写的solver如何固定住外参呢？
     solver::Solver solver;
 
@@ -886,7 +886,7 @@ void Estimator::optimization()
         ROS_DEBUG("\nprior size1=%lu, param_addr_check.size() = %lu, landmark size: %lu, except landmark size = %lu",
                   size_1, param_addr_check.size(), landmark_addr_check.size(), param_addr_check.size()-landmark_addr_check.size());//landmark_addr_check中多加了个td
 
-//#else
+#else
         //dropset用于指定求解时需要Schur消元的变量，即landmark
         solver::ResidualBlockInfo *residual_block_info = new solver::ResidualBlockInfo(marginalization_factor, NULL,
                                                                        last_marginalization_parameter_blocks,
@@ -939,7 +939,7 @@ void Estimator::optimization()
                 param_addr_check[addr + (long) k * (long) sizeof(long)] = 1;
             }
         }
-//#else
+#else
         solver::ResidualBlockInfo *residual_block_info =
                 new solver::ResidualBlockInfo(imu_factor, NULL,
                                               vector<double *>{para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j]},
@@ -1011,7 +1011,7 @@ void Estimator::optimization()
                     para[4] = para_Td[0];
                     f_td->check(para);
                     */
-//#else
+#else
                 solver::ResidualBlockInfo *residual_block_info = new solver::ResidualBlockInfo(f_td, loss_function,
                                                                                 vector<double*>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index], para_Td[0]},
                                                                                                vector<int>{3});
@@ -1035,7 +1035,7 @@ void Estimator::optimization()
                 }
                 param_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
                 landmark_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
-//#else
+#else
                 solver::ResidualBlockInfo *residual_block_info = new solver::ResidualBlockInfo(f, loss_function,
                                                                                 vector<double*>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]},
                                                                                                vector<int>{3});
@@ -1105,7 +1105,7 @@ void Estimator::optimization()
                     }
                     param_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
                     landmark_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
-//#else
+#else
                     solver::ResidualBlockInfo *residual_block_info = new solver::ResidualBlockInfo(f, loss_function,
                                                                                                    vector<double*>{para_Pose[start], relo_Pose, para_Ex_Pose[0], para_Feature[feature_index]},
                                                                                                    vector<int>{3});
@@ -1125,8 +1125,8 @@ void Estimator::optimization()
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::DENSE_SCHUR;
     //options.num_threads = 2;
-    options.trust_region_strategy_type = ceres::DOGLEG;//狗腿算法，与LM较为接近
-//    options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;//LM
+//    options.trust_region_strategy_type = ceres::DOGLEG;//狗腿算法，与LM较为接近
+    options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;//LM
     options.max_num_iterations = NUM_ITERATIONS;
     //options.use_explicit_schur_complement = true;
     //options.minimizer_progress_to_stdout = true;
@@ -1141,11 +1141,13 @@ void Estimator::optimization()
     ceres::Solve(options, &problem, &summary);
 
     //cout << summary.BriefReport() << endl;
-    ROS_DEBUG("Iterations : %d", static_cast<int>(summary.iterations.size()));
-    ROS_DEBUG("solver costs: %f", t_solver.toc());
+    ROS_DEBUG("\nIterations : %d", static_cast<int>(summary.iterations.size()));
+    ROS_DEBUG("\nVINS solver costs: %f ms", t_solver.toc());
 
-//#else //手写求解器求解
-    solver.solve(10);
+#else //手写求解器求解
+    TicToc t_solver;
+    solver.solve(8);
+    ROS_DEBUG("\nmy solver costs: %f ms", t_solver.toc());
 #endif
 
 
@@ -1259,13 +1261,13 @@ void Estimator::optimization()
         //与[0]有关的待优化变量存放于parameter_block_data中
         TicToc t_pre_margin;
         marginalization_info->preMarginalize();
-        ROS_DEBUG("pre marginalization %f ms", t_pre_margin.toc());
+        ROS_DEBUG("\npre marginalization %f ms", t_pre_margin.toc());
 
         //多线程计算在X0处的整个先验项的参数块，雅可比矩阵和残差值
         //5、多线程构造先验项舒尔补AX=b的结构，在X0处线性化计算Jacobian和残差
         TicToc t_margin;
         marginalization_info->marginalize();
-        ROS_DEBUG("marginalization %f ms", t_margin.toc());
+        ROS_DEBUG("\nmarginalization %f ms", t_margin.toc());
 
         //用marg之后的待优化参数去生成新的last_marg_info和last_marg_parameter_blocks供下一次使用
         //6.调整参数块在下一次窗口中对应的位置（往前移一格），注意这里是指针，后面slideWindow中会赋新值，这里只是提前占座
@@ -1372,9 +1374,9 @@ void Estimator::optimization()
             
         }
     }
-    ROS_DEBUG("whole marginalization costs: %f", t_whole_marginalization.toc());
+    ROS_DEBUG("whole marginalization costs: %f ms", t_whole_marginalization.toc());
     
-    ROS_DEBUG("whole time for ceres: %f", t_whole.toc());
+    ROS_DEBUG("whole time for ceres: %f ms", t_whole.toc());
 }
 
 //滑窗之后，WINDOW的最后两个Ps，Vs，Rs，Bas，Bgs相同，无论是old还是new，
