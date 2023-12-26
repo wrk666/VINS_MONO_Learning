@@ -2,6 +2,7 @@
 #include "solver/solve.h"
 
 //#define CERES_SOLVE
+uint8_t strategy = 1;//先定义为全局变量，后面再优化
 
 Estimator::Estimator(): f_manager{Rs}
 {
@@ -866,7 +867,8 @@ void Estimator::optimization()
     ceres::Problem problem;
 
     //自己写的solver
-    solver::Solver solver;
+
+    solver::Solver solver(strategy);
 #ifdef CERES_SOLVE
 
     //添加ceres参数块

@@ -56,7 +56,7 @@ struct ThreadsStruct
 class Solver
 {
 public:
-    Solver():mem_allocated_(false){};
+    Solver(uint8_t strategy): strategy_(strategy), alpha_(1), mem_allocated_(false){};
     ~Solver();
     int localSize(int size) const;
     int globalSize(int size) const;
@@ -84,7 +84,7 @@ public:
 
     bool solve(int iterations);
     void solveLinearSystem();/// 解线性方程
-    bool updateStates();/// 更新状态变量
+    bool updateStates(double weight) ;/// 更新状态变量
     bool backupStates();//回滚状态变量
     bool rollbackStates(); // 有时候 update 后残差会变大，需要退回去，重来
     double computeChi() const;
@@ -98,7 +98,7 @@ public:
     double currentLambda_;
     double currentChi_;
     double stopThresholdLM_;    // LM 迭代退出阈值条件
-    double ni_;                 //控制 Lambda 缩放大小
+    double ni_;                 //strategy3控制 Lambda 缩放大小
     std::string file_name_;
     int try_iter_;
 
@@ -117,7 +117,10 @@ public:
     //是否已调用preMakeHessian分配过内存
     bool mem_allocated_;
 
+    uint8_t strategy_;
 
+    //策略2更新使用的alpha
+    double alpha_;
 };
 
 
