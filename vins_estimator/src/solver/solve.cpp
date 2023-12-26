@@ -96,16 +96,15 @@ for(int i=0; i<cost_function->parameter_block_sizes().size(); ++i) {
 
 Solver::~Solver()
 {
-    //ROS_WARN("release marginlizationinfo");
     ROS_DEBUG("destractor here1");
     //new出来的是在堆上的内存，需要手动delete释放；malloc的内存使用free来释放
-    for (auto it = parameter_block_data.begin(); it != parameter_block_data.end(); ++it)
-        delete[] it->second;
-    ROS_DEBUG("destractor here2");
-//    if(mem_allocated_) {
+    if(mem_allocated_) {
+        for (auto it = parameter_block_data.begin(); it != parameter_block_data.end(); ++it)
+            delete[] it->second;
+        ROS_DEBUG("destractor here2");
         for (auto it = parameter_block_data_backup.begin(); it != parameter_block_data_backup.end(); ++it)
             delete[] it->second;
-//    }
+    }
     ROS_DEBUG("destractor here3");
     //这个不能在这delete放，因为ceres要用
 //    for (int i = 0; i < (int)factors.size(); i++)
@@ -402,13 +401,6 @@ std::vector<double *> Solver::getParameterBlocks(std::unordered_map<long, double
 
 //求解器相关函数
 bool Solver::solve(int iterations) {
-
-
-/*    if (edges_.size() == 0 || verticies_.size() == 0) {
-        std::cerr << "\nCannot solve problem without edges or verticies" << std::endl;
-        return false;
-    }*/
-
     TicToc t_total_makeHessian;
     preMakeHessian();
     //多线程计算在X0处的整个先验项的参数块，雅可比矩阵和残差值
@@ -456,8 +448,8 @@ bool Solver::solve(int iterations) {
             ROS_DEBUG("\nremoveLambdaHessianLM cost %f ms", t_removeLambdaHessianLM.toc());
 
 
-            // 优化退出条件1： delta_x_ 很小则退出
-            if (delta_x_.squaredNorm() <= 1e-6 || false_cnt > 10) {
+            // 优化退出条件1： delta_x_ 很小则退出 原来是1e-6
+            if (delta_x_.squaredNorm() <= 1e-50 || false_cnt > 10) {
                 stop = true;
                 ROS_DEBUG("\ndelta_x too small: %e, or false_cnt=%d > 10  break", delta_x_.squaredNorm(), false_cnt);//都是在这出去的
                 break;
@@ -472,16 +464,16 @@ bool Solver::solve(int iterations) {
 
             // 更新状态量 X = X+ delta_x
             TicToc t_updateStates;
-            updateStates();
+            updateStates();//0.08ms
             ROS_DEBUG("\nupdateStates cost %f ms", t_updateStates.toc());
 
             // 判断当前步是否可行以及 LM 的 lambda 怎么更新
             preMakeHessian();//计算更新后的Jacobian和residual
             oneStepSuccess = isGoodStepInLM();//误差是否下降
-            // 后续处理，
+            // 后续处理
             if (oneStepSuccess) {
                 TicToc t_backupStates;
-                backupStates();//若求解成功则备份当前更新的状态量
+                backupStates();//若求解成功则备份当前更新的状态量  0.03ms
                 ROS_DEBUG("\nbackupStates cost %f ms", t_backupStates.toc());
 
                 // 在新线性化点 构建 hessian
@@ -523,98 +515,117 @@ void Solver::solveLinearSystem() {
 //    delta_x_ = Hessian_.inverse() * b_;
 //    delta_x_ = H.ldlt().solve(b_);
 
-    //method2：schur消元求解
-    //求解Hx=b，marg不用求出△x，所以不用对方程组求解，但是优化时需要求解出整个△x
-    Eigen::MatrixXd Amm_solver = 0.5 * (Hessian_.block(0, 0, m, m) + Hessian_.block(0, 0, m, m).transpose());
-    Eigen::VectorXd bmm_solver = b_.segment(0, m);
-    Eigen::MatrixXd Amr_solver = Hessian_.block(0, m, m, n);
-    Eigen::MatrixXd Arm_solver = Hessian_.block(m, 0, n, m);
-    Eigen::MatrixXd Arr_solver = Hessian_.block(m, m, n, n);
-    Eigen::VectorXd brr_solver = b_.segment(m, n);
+//Schur消元求解，marg掉landmark
+//    //method2：schur消元求解
+//    //求解Hx=b，marg不用求出△x，所以不用对方程组求解，但是优化时需要求解出整个△x
+//    Eigen::MatrixXd Amm_solver = 0.5 * (Hessian_.block(0, 0, m, m) + Hessian_.block(0, 0, m, m).transpose());
+//    Eigen::VectorXd bmm_solver = b_.segment(0, m);
+//    Eigen::MatrixXd Amr_solver = Hessian_.block(0, m, m, n);
+//    Eigen::MatrixXd Arm_solver = Hessian_.block(m, 0, n, m);
+//    Eigen::MatrixXd Arr_solver = Hessian_.block(m, m, n, n);
+//    Eigen::VectorXd brr_solver = b_.segment(m, n);
+//
+//
+//
+//    //求Amm_solver^(-1)
+//    double scale = Amm_solver.maxCoeff();
+//    Amm_solver /= scale;
+//    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes(Amm_solver);
+//    if (saes.info() == Eigen::Success) {
+//        ROS_DEBUG("\nsaes Eigenvalue computation success.");
+//    } else {
+//        ROS_WARN("\nsaes Eigenvalue computation failed");
+//    }
+//    //这个1e-4应该是个经验值，不懂数值稳定性，暂不研究
+////    ROS_ASSERT_MSG(saes.eigenvalues().minCoeff() >= -1e-4, "min eigenvalue %f", saes.eigenvalues().minCoeff());
+//    size_t tmp_size = saes.eigenvalues().size();
+//    ROS_DEBUG("\nhere saes min eigenvalue: %e, max eigenvalue: %e, saes.eigenvalues.size():%lu",
+//              saes.eigenvalues().minCoeff(), saes.eigenvalues().maxCoeff(), tmp_size);
+//    ROS_DEBUG_STREAM("\nsaes.eigenvalues(): " << saes.eigenvalues().transpose());
+//
+//    //marg的矩阵块求逆,特征值分解求逆更快
+//    Eigen::MatrixXd Amm_inv_solver = saes.eigenvectors()
+//                              * Eigen::VectorXd((saes.eigenvalues().array() > eps).select(saes.eigenvalues().array().inverse(), 0)).asDiagonal()
+//                              * saes.eigenvectors().transpose();
+//    Amm_inv_solver = scale * Amm_inv_solver;//恢复
+//
+//    Eigen::FullPivLU<Eigen::MatrixXd> lu_decomp(Amm_solver);
+//    if (lu_decomp.isInvertible()) {
+//        ROS_DEBUG("\nAmm_solver is invertible.");
+//    } else {
+//        ROS_WARN("\nAmm_solver is not invertible.");
+//    }
+///*    Eigen::MatrixXd Amm_inv_solver = Amm_solver.inverse();*/
+//    Eigen::MatrixXd tmpA_solver = Arm_solver * Amm_inv_solver;
+//
+//    //step1: Schur补
+//    Eigen::MatrixXd Arr_schur = Arr_solver - tmpA_solver * Amr_solver;
+//    Eigen::VectorXd brr_schur = brr_solver - tmpA_solver * bmm_solver;
+//
+//    ROS_DEBUG("here1");
+//
+//    // step2: solve Hpp * delta_x = bpp
+//    //1 TODO：没有lambda，不知道怎么用PCG solver来求解△xrr，先用上面的SVD求逆方法，
+//    //2 TODO：数值稳定性目前不懂，先不assert看看会有什么效果(可能需要rescale)
+//    double scale_solver = Arr_schur.maxCoeff();
+//    Arr_schur /= scale_solver;
+//    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes_solver(Arr_schur);//缩放
+//    if (saes_solver.info() == Eigen::Success) {
+//        ROS_DEBUG("\nsaes_solver Eigenvalue computation success.");
+//    } else {
+//        ROS_WARN("\nsaes_solver Eigenvalue computation failed");
+//    }
+////    ROS_ASSERT_MSG(saes_solver.eigenvalues().minCoeff() >= -1e-4, "min eigenvalue %f", saes_solver.eigenvalues().minCoeff());
+//    Eigen::MatrixXd Arr_schur_inv = saes_solver.eigenvectors()
+//                                    * Eigen::VectorXd((saes_solver.eigenvalues().array() > eps).select(saes_solver.eigenvalues().array().inverse(), 0)).asDiagonal()
+//                                    * saes_solver.eigenvectors().transpose();
+//    Arr_schur_inv = scale_solver * Arr_schur_inv;//恢复
+//    //这个可能会崩，不知道为啥
+//    size_t tmp_size_solver = saes_solver.eigenvalues().size();
+//    ROS_DEBUG("\nhere saes_solver min eigenvalue: %e, max eigenvalue: %e, saes_solver.eigenvalues.size():%lu",
+//              saes_solver.eigenvalues().minCoeff(), saes_solver.eigenvalues().maxCoeff(), tmp_size_solver);
+//    ROS_DEBUG_STREAM("\nsaes_solver.eigenvalues(): " << saes_solver.eigenvalues().transpose());
+//
+//    ROS_DEBUG("\nhere2");
+//
+//    Eigen::FullPivLU<Eigen::MatrixXd> lu_decomp_schur(Arr_schur);
+//    if (lu_decomp_schur.isInvertible()) {
+//        ROS_DEBUG("\nArr_schur is invertible.");
+//    } else {
+//        ROS_DEBUG("\nArr_schur is not invertible.");
+//    }
+//
+///*    Eigen::MatrixXd Arr_schur_inv = Arr_schur.inverse();*/
+//    ROS_DEBUG("\nhere21");
+//    Eigen::VectorXd delta_x_rr = Arr_schur_inv * brr_schur;
+//    ROS_DEBUG("\nhere22");
+//    Eigen::VectorXd delta_x_mm = Amm_inv_solver * (bmm_solver - Amr_solver * delta_x_rr);
+//    ROS_DEBUG("\nhere23");
+//    delta_x_.tail(n) = delta_x_rr;
+//    ROS_DEBUG("\nhere24");
+//    delta_x_.head(m) = delta_x_mm;
+//    ROS_DEBUG("\nhere25");
 
 
-
-    //求Amm_solver^(-1)
-    double scale = Amm_solver.maxCoeff();
-    Amm_solver /= scale;
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes(Amm_solver);
-    if (saes.info() == Eigen::Success) {
-        ROS_DEBUG("\nsaes Eigenvalue computation success.");
+/*  判断矩阵是否可逆  20ms左右
+    TicToc t_judge_invertible;
+    Eigen::FullPivLU<Eigen::MatrixXd> lu_decomp_Hessian(Hessian_);
+    if (lu_decomp_Hessian.isInvertible()) {
+        ROS_DEBUG("\nHessian_ is invertible.");
     } else {
-        ROS_WARN("\nsaes Eigenvalue computation failed");
+        ROS_WARN("\nHessian_ is not invertible.");
     }
-    //这个1e-4应该是个经验值，不懂数值稳定性，暂不研究
-//    ROS_ASSERT_MSG(saes.eigenvalues().minCoeff() >= -1e-4, "min eigenvalue %f", saes.eigenvalues().minCoeff());
-    size_t tmp_size = saes.eigenvalues().size();
-    ROS_DEBUG("\nhere saes min eigenvalue: %e, max eigenvalue: %e, saes.eigenvalues.size():%lu",
-              saes.eigenvalues().minCoeff(), saes.eigenvalues().maxCoeff(), tmp_size);
-    ROS_DEBUG_STREAM("\nsaes.eigenvalues(): " << saes.eigenvalues().transpose());
+    ROS_DEBUG("\nt_judge_invertible cost %f ms", t_judge_invertible.toc());*/
 
-    //marg的矩阵块求逆,特征值分解求逆更快
-    Eigen::MatrixXd Amm_inv_solver = saes.eigenvectors()
-                              * Eigen::VectorXd((saes.eigenvalues().array() > eps).select(saes.eigenvalues().array().inverse(), 0)).asDiagonal()
-                              * saes.eigenvectors().transpose();
-    Amm_inv_solver = scale * Amm_inv_solver;//恢复
+    TicToc t_solve_equation;
+//    delta_x_ = Hessian_.ldlt().solve(b_);
+    int pcg_iter_num = Hessian_.rows() * 2; // PCG迭代次数
+    delta_x_ = pcgSolver(Hessian_, b_, pcg_iter_num);  //0.3ms
+    ROS_DEBUG("\nsolve equation cost %f ms", t_solve_equation.toc());
 
-    Eigen::FullPivLU<Eigen::MatrixXd> lu_decomp(Amm_solver);
-    if (lu_decomp.isInvertible()) {
-        ROS_DEBUG("\nAmm_solver is invertible.");
-    } else {
-        ROS_WARN("\nAmm_solver is not invertible.");
-    }
-/*    Eigen::MatrixXd Amm_inv_solver = Amm_solver.inverse();*/
-    Eigen::MatrixXd tmpA_solver = Arm_solver * Amm_inv_solver;
-
-    //step1: Schur补
-    Eigen::MatrixXd Arr_schur = Arr_solver - tmpA_solver * Amr_solver;
-    Eigen::VectorXd brr_schur = brr_solver - tmpA_solver * bmm_solver;
-
-    ROS_DEBUG("here1");
-
-    // step2: solve Hpp * delta_x = bpp
-    //1 TODO：没有lambda，不知道怎么用PCG solver来求解△xrr，先用上面的SVD求逆方法，
-    //2 TODO：数值稳定性目前不懂，先不assert看看会有什么效果(可能需要rescale)
-    double scale_solver = Arr_schur.maxCoeff();
-    Arr_schur /= scale_solver;
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes_solver(Arr_schur);//缩放
-    if (saes_solver.info() == Eigen::Success) {
-        ROS_DEBUG("\nsaes_solver Eigenvalue computation success.");
-    } else {
-        ROS_WARN("\nsaes_solver Eigenvalue computation failed");
-    }
-//    ROS_ASSERT_MSG(saes_solver.eigenvalues().minCoeff() >= -1e-4, "min eigenvalue %f", saes_solver.eigenvalues().minCoeff());
-    Eigen::MatrixXd Arr_schur_inv = saes_solver.eigenvectors()
-                                    * Eigen::VectorXd((saes_solver.eigenvalues().array() > eps).select(saes_solver.eigenvalues().array().inverse(), 0)).asDiagonal()
-                                    * saes_solver.eigenvectors().transpose();
-    Arr_schur_inv = scale_solver * Arr_schur_inv;//恢复
-    //这个可能会崩，不知道为啥
-    size_t tmp_size_solver = saes_solver.eigenvalues().size();
-    ROS_DEBUG("\nhere saes_solver min eigenvalue: %e, max eigenvalue: %e, saes_solver.eigenvalues.size():%lu",
-              saes_solver.eigenvalues().minCoeff(), saes_solver.eigenvalues().maxCoeff(), tmp_size_solver);
-    ROS_DEBUG_STREAM("\nsaes_solver.eigenvalues(): " << saes_solver.eigenvalues().transpose());
-
-    ROS_DEBUG("\nhere2");
-
-    Eigen::FullPivLU<Eigen::MatrixXd> lu_decomp_schur(Arr_schur);
-    if (lu_decomp_schur.isInvertible()) {
-        ROS_DEBUG("\nArr_schur is invertible.");
-    } else {
-        ROS_DEBUG("\nArr_schur is not invertible.");
-    }
-
-/*    Eigen::MatrixXd Arr_schur_inv = Arr_schur.inverse();*/
-    ROS_DEBUG("\nhere21");
-    Eigen::VectorXd delta_x_rr = Arr_schur_inv * brr_schur;
-    ROS_DEBUG("\nhere22");
-    Eigen::VectorXd delta_x_mm = Amm_inv_solver * (bmm_solver - Amr_solver * delta_x_rr);
-    ROS_DEBUG("\nhere23");
-    delta_x_.tail(n) = delta_x_rr;
-    ROS_DEBUG("\nhere24");
-    delta_x_.head(m) = delta_x_mm;
-    ROS_DEBUG("\nhere25");
     memcpy(delta_x_array_, delta_x_.data(), sizeof(double) * (int)delta_x_.size());//转为数组，供状态更新使用(delta_x_太大)
-    ROS_DEBUG_STREAM("\nhere3 solve complete, delta_x_.size()=" << delta_x_.size() << ", delta_x_.squaredNorm()=" << delta_x_.squaredNorm() <<
-                    "\ndelta_x_:" << delta_x_.transpose() << "\n");
+    ROS_DEBUG_STREAM("\nhere3 solve complete, delta_x_.size()=" << delta_x_.size() << ", delta_x_.norm()= "<< delta_x_.norm()
+                          << ",  delta_x_.squaredNorm()=" << delta_x_.squaredNorm() << "\ndelta_x_:" << delta_x_.transpose() << "\n");
 
 }
 
@@ -623,16 +634,19 @@ void Solver::solveLinearSystem() {
 //但是因为在先验factor在Evaluate时会计算residual，所以不用手动更新，只需要更新最核心的x即可。其他的factor相同。
 bool Solver::updateStates() {
     //使用idx来找对应的param
+    double cur_x_array[1000 + (WINDOW_SIZE + 1) * (SIZE_POSE + SIZE_SPEEDBIAS) + SIZE_POSE + 1 + 100];
     for (auto it : parameter_block_idx){
         const long addr = it.first;
         const int idx = it.second;
         const int tmp_param_block_size = parameter_block_size[addr];
+        //保存一份待优化变量，和delta_x进行数量级对比
+        memcpy( &cur_x_array[idx], reinterpret_cast<double *>(addr), sizeof(double) *(int)SIZE_POSE);
         if(tmp_param_block_size == SIZE_POSE) {
             //使用备份的x来更新参数(没有更新到实际的参数上去)
 //            updatePose(parameter_block_data_backup[addr], &delta_x_array_[idx], parameter_block_data[addr]);
 //            double before = reinterpret_cast<double *>(addr)[0];
 //            ROS_DEBUG_STREAM("1 before update: " << before);
-            updatePose(parameter_block_data_backup[addr], &delta_x_array_[idx], reinterpret_cast<double *>(addr));
+            updatePose(parameter_block_data_backup[addr], &delta_x_array_[idx], reinterpret_cast<double *>(addr));//TODO:这个backup应该可以用parameter_block_data替代
 //            double after = reinterpret_cast<double *>(addr)[0];
 //            ROS_DEBUG_STREAM("1 after update: " << after << ",  before==after: " << (before==after) );
         } else {
@@ -642,26 +656,29 @@ bool Solver::updateStates() {
             x_plus_delta = x + delta_x;
         }
     }
+    // 初始化Eigen向量
+    Eigen::Map<Eigen::VectorXd> cur_x(cur_x_array, m+n);
+    ROS_DEBUG_STREAM("\ncur_x: " << cur_x.transpose());
     return true;
 }
 
 //备份状态量
 bool Solver::backupStates() {
-    for (auto it : parameter_block_data){
+    for (auto it : parameter_block_idx){
         const long addr = it.first;
         const int tmp_param_block_size = parameter_block_size[addr];
-        memcpy(parameter_block_data_backup[addr], parameter_block_data[addr], tmp_param_block_size);
+        memcpy(parameter_block_data_backup[addr], reinterpret_cast<double *>(addr), sizeof(double) * (int)tmp_param_block_size);
     }
     return true;
 }
 
 //回滚状态量
 bool Solver::rollbackStates() {
-    for (auto it : parameter_block_data){
+    for (auto it : parameter_block_idx){
         const long addr = it.first;
         const int tmp_param_block_size = parameter_block_size[addr];
-//        memcpy(parameter_block_data[addr], parameter_block_data_backup[addr], tmp_param_block_size);
-        memcpy(reinterpret_cast<double *>(addr), parameter_block_data_backup[addr], tmp_param_block_size);
+//        memcpy(parameter_block_data[addr], parameter_block_data_backup[addr], sizeof(double) * (int)tmp_param_block_size);
+        memcpy(reinterpret_cast<double *>(addr), parameter_block_data_backup[addr], sizeof(double) * (int)tmp_param_block_size);
     }
     return true;
 }
@@ -679,15 +696,15 @@ double Solver::computeChi() const{
         if(it->residuals.size()==prior_dim) {
             double this_Chi = it->residuals.norm();
             tmpChi += this_Chi;
-            ROS_DEBUG_STREAM("\nprior factor, this_Chi= " << this_Chi
+/*            ROS_DEBUG_STREAM("\nprior factor, this_Chi= " << this_Chi
                               << ",   residuals size: " << it->residuals.size()
-                              << ", residuals: " << it->residuals.transpose());
+                              << ", residuals: " << it->residuals.transpose());*/
         } else {
             double this_Chi = it->residuals.transpose() * it->residuals;
             tmpChi += this_Chi;
-            ROS_DEBUG_STREAM("\nother factor, this_Chi= " << this_Chi
+/*            ROS_DEBUG_STREAM("\nother factor, this_Chi= " << this_Chi
                               << ",   residuals size: " << it->residuals.size()
-                              << ",   residuals: " << it->residuals.transpose());
+                              << ",   residuals: " << it->residuals.transpose());*/
         }
     }
     ROS_DEBUG_STREAM("\nhere tmpChi= " << tmpChi);
@@ -709,7 +726,7 @@ void Solver::computeLambdaInitLM() {
         maxDiagonal = std::max(fabs(Hessian_(i, i)), maxDiagonal);//取H矩阵的最大值，然后*涛
     }
 //    double tau = 1e-5;
-    double tau = 1e-1;//[1e-8,1] tau越小，△x越大//////////////////////////////////
+    double tau = 1e1;//[1e-8,1] tau越小，△x越大//////////////////////////////////
     currentLambda_ = tau * maxDiagonal;
     ROS_DEBUG_STREAM("\nin computeLambdaInitLM currentChi_= " << currentChi_
                     << ",  init currentLambda_=" << currentLambda_
@@ -765,7 +782,7 @@ bool Solver::isGoodStepInLM() {
     }
     ROS_DEBUG("\ncurrentLambda_: %e, ni_: %e, rho: %f, currentChi_: %e, tempChi: %e, scale: %e",
               currentLambda_, ni_, rho, currentChi_, tempChi, scale);
-    ROS_DEBUG_STREAM("\ndelta_x_.squaredNorm(): " << delta_x_.squaredNorm() << ",  delta_x_: " << delta_x_.transpose()
+    ROS_DEBUG_STREAM("\nret = " << ret <<",  rho>0 = " << (rho>0) <<",  rho: " << rho << ",   delta_x_.squaredNorm(): " << delta_x_.squaredNorm() << ",  delta_x_: " << delta_x_.transpose()
                           << "\nb_.norm(): " << b_.norm() << ",  b_: " << b_.transpose());
     FILE *fp_lambda = fopen(file_name_.data(), "a");
     fprintf(fp_lambda, "%d, %f\n", try_iter_, currentLambda_);

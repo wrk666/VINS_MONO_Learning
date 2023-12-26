@@ -802,6 +802,57 @@ bool Estimator::failureDetection()
     return false;
 }
 
+//获得当前优化参数，按照自定义solver中的排列方式排列
+static void get_cur_parameter(solver::Solver& solver, double* cur_x_array) {
+    for (auto it : solver.parameter_block_idx) {
+        const long addr = it.first;
+        const int idx = it.second;
+        const int tmp_param_block_size = solver.parameter_block_size[addr];
+        ROS_ASSERT_MSG(tmp_param_block_size > 0, "tmp_param_block_size = %d", tmp_param_block_size);
+        memcpy( &cur_x_array[idx], reinterpret_cast<double *>(addr), sizeof(double) *(int)tmp_param_block_size);
+    }
+}
+
+static bool updatePose(const double *x, const double *delta, double *x_plus_delta)
+{
+    Eigen::Map<const Eigen::Vector3d> _p(x);
+    Eigen::Map<const Eigen::Quaterniond> _q(x + 3);
+
+    Eigen::Map<const Eigen::Vector3d> dp(delta);
+
+    Eigen::Quaterniond dq = Utility::deltaQ(Eigen::Map<const Eigen::Vector3d>(delta + 3));
+
+    Eigen::Map<Eigen::Vector3d> p(x_plus_delta);
+    Eigen::Map<Eigen::Quaterniond> q(x_plus_delta + 3);
+
+    p = -_p + dp ;
+    q = (_q.inverse() * dq).normalized();//四元数乘法并归一化
+
+    return true;
+}
+
+//计算ceres优化iteration轮之后的delta_x, solver要传引用，否则会调用析构函数
+static void cal_delta_x(solver::Solver& solver, double* x_before, double* x_after, double* delta_x) {
+    for (auto it : solver.parameter_block_idx) {
+        const long addr = it.first;
+        const int idx = it.second;
+        const int tmp_param_block_size = solver.parameter_block_size[addr];
+        double tmp_delta_pose_array[SIZE_POSE];
+        ROS_DEBUG_STREAM("\nidx: " << idx << ", tmp_param_block_size: " << tmp_param_block_size);
+//        ROS_DEBUG_STREAM("\ndelta_x size: " << delta_x.size());
+
+        if (tmp_param_block_size == SIZE_POSE) {
+            updatePose(&x_after[idx], &x_before[idx], &delta_x[idx]);
+        } else {
+            Eigen::Map<const Eigen::VectorXd> x_map(&x_before[idx], tmp_param_block_size);
+            Eigen::Map<const Eigen::VectorXd> x_plus_delta_map(&x_after[idx], tmp_param_block_size);
+            Eigen::Map<Eigen::VectorXd> delta_x_map(&delta_x[idx], tmp_param_block_size);
+            delta_x_map = x_plus_delta_map - x_map;
+//            ROS_DEBUG_STREAM("\ndelta_x_map: " << delta_x_map.transpose());
+        }
+    }
+}
+
 //后端非线性优化
 //大作业T1.a思路 这里要添加自己的makehessian的代码AddResidualBlockSolver()//类似于marg一样管理所有的factor，只不过，这里的m是WINDOW内所有的landmark，n是所有的P，V，Tbc，td，relopose
 //管理方式也是地址->idx,地址->size一样，在添加的时候指定landmark的drop_set为valid，剩下的为非valid
@@ -811,8 +862,13 @@ void Estimator::optimization()
     ceres::LossFunction *loss_function;
     //loss_function = new ceres::HuberLoss(1.0);//Huber损失函数
     loss_function = new ceres::CauchyLoss(1.0);//柯西损失函数
-#ifdef CERES_SOLVE
+
     ceres::Problem problem;
+
+    //自己写的solver
+    solver::Solver solver;
+#ifdef CERES_SOLVE
+
     //添加ceres参数块
     //因为ceres用的是double数组，所以在下面用vector2double做类型装换
     //Ps、Rs转变成para_Pose，Vs、Bas、Bgs转变成para_SpeedBias
@@ -845,7 +901,7 @@ void Estimator::optimization()
 
 #else
     //自己写的solver如何固定住外参呢？
-    solver::Solver solver;
+//    solver::Solver solver;
 
 #endif
 
@@ -1014,7 +1070,7 @@ void Estimator::optimization()
 #else
                 solver::ResidualBlockInfo *residual_block_info = new solver::ResidualBlockInfo(f_td, loss_function,
                                                                                 vector<double*>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index], para_Td[0]},
-                                                                                               vector<int>{3});
+                                                                                               vector<int>{});
                 solver.addResidualBlockInfo(residual_block_info);
 #endif
             }
@@ -1038,7 +1094,7 @@ void Estimator::optimization()
 #else
                 solver::ResidualBlockInfo *residual_block_info = new solver::ResidualBlockInfo(f, loss_function,
                                                                                 vector<double*>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]},
-                                                                                               vector<int>{3});
+                                                                                               vector<int>{});
                 solver.addResidualBlockInfo(residual_block_info);
 #endif
             }
@@ -1108,7 +1164,7 @@ void Estimator::optimization()
 #else
                     solver::ResidualBlockInfo *residual_block_info = new solver::ResidualBlockInfo(f, loss_function,
                                                                                                    vector<double*>{para_Pose[start], relo_Pose, para_Ex_Pose[0], para_Feature[feature_index]},
-                                                                                                   vector<int>{3});
+                                                                                                   vector<int>{});
                     solver.addResidualBlockInfo(residual_block_info);
 #endif
                     retrive_feature_index++;
@@ -1137,17 +1193,68 @@ void Estimator::optimization()
         options.max_solver_time_in_seconds = SOLVER_TIME;
     TicToc t_solver;
     ceres::Solver::Summary summary;
-    //这里需要换成自己实现的solve，自己构建H矩阵并且自己实现LM算法，测试VINS-MONO的精度和ceres是否一样
+
+/*    //获得idx和data
+    solver.preMakeHessian();
+    solver.makeHessian();
+
+    ROS_DEBUG("delta1");
+    int cur_x_size = 1000 + (WINDOW_SIZE + 1) * (SIZE_POSE + SIZE_SPEEDBIAS) + SIZE_POSE + 1 + 100;
+    double cur_x_array[cur_x_size], cur_x_array_before[cur_x_size];
+    get_cur_parameter(solver, cur_x_array);
+    memcpy(cur_x_array_before, cur_x_array, sizeof(double) * cur_x_size);
+    Eigen::Map<Eigen::VectorXd> cur_x(cur_x_array, solver.m + solver.n);//cur_x_array变了，cur_x才会变
+    const Eigen::VectorXd cur_x_before = cur_x;*/
+
+    ROS_DEBUG("delta2");
     ceres::Solve(options, &problem, &summary);
+    ROS_DEBUG("delta3");
+
+/*    get_cur_parameter(solver, cur_x_array);
+    double delta_x_ceres[cur_x_size];
+    Eigen::Map<Eigen::VectorXd> delta_x_ceres_map(delta_x_ceres, solver.m + solver.n);
+
+    cal_delta_x(solver, cur_x_array_before, cur_x_array, delta_x_ceres);
+    ROS_DEBUG_STREAM("\ncur_x before: " << cur_x_before.transpose() <<
+                          "\ncur_x after: " << cur_x.transpose() <<
+                          "\ndelta_x_ceres: "<< delta_x_ceres_map.transpose() <<
+                          "\ndelta_x_ceres.norm(): " << delta_x_ceres_map.norm() <<
+                          ",    delta_x_ceres.squaredNorm(): " << delta_x_ceres_map.squaredNorm());*/
 
     //cout << summary.BriefReport() << endl;
     ROS_DEBUG("\nIterations : %d", static_cast<int>(summary.iterations.size()));
     ROS_DEBUG("\nVINS solver costs: %f ms", t_solver.toc());
 
 #else //手写求解器求解
+    ROS_DEBUG("delta1");
+    solver.preMakeHessian();
+    solver.makeHessian();
+
+    ROS_DEBUG("delta1");
+    int cur_x_size = 1000 + (WINDOW_SIZE + 1) * (SIZE_POSE + SIZE_SPEEDBIAS) + SIZE_POSE + 1 + 100;
+    double cur_x_array[cur_x_size], cur_x_array_before[cur_x_size];
+    get_cur_parameter(solver, cur_x_array);
+    memcpy(cur_x_array_before, cur_x_array, sizeof(double) * cur_x_size);
+    Eigen::Map<Eigen::VectorXd> cur_x(cur_x_array, solver.m + solver.n);//cur_x_array变了，cur_x才会变
+    const Eigen::VectorXd cur_x_before = cur_x;
+
+    ROS_DEBUG("delta2");
     TicToc t_solver;
     solver.solve(8);
     ROS_DEBUG("\nmy solver costs: %f ms", t_solver.toc());
+
+    get_cur_parameter(solver, cur_x_array);
+    double delta_x[cur_x_size];
+    Eigen::Map<Eigen::VectorXd> delta_x_map(delta_x, solver.m + solver.n);
+
+    ROS_DEBUG("delta3");
+
+    cal_delta_x(solver, cur_x_array_before, cur_x_array, delta_x);
+    ROS_DEBUG_STREAM("\ncur_x before: " << cur_x_before.transpose() <<
+                          "\ncur_x after: " << cur_x.transpose() <<
+                          "\ndelta_x: "<< delta_x_map.transpose() <<
+                          "\ndelta_x.norm(): " << delta_x_map.norm() <<
+                          ",    delta_x.squaredNorm(): " << delta_x_map.squaredNorm());
 #endif
 
 
