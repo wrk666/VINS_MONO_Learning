@@ -167,7 +167,7 @@ int MarginalizationInfo::globalSize(int size) const
 }
 
 //线程函数
-void* ThreadsConstructA(void* threadsstruct)
+static void* ThreadsConstructA(void* threadsstruct)
 {
     ThreadsStruct* p = ((ThreadsStruct*)threadsstruct);
 

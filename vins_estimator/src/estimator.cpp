@@ -1,8 +1,8 @@
 #include "estimator.h"
 #include "solver/solve.h"
 
-//#define CERES_SOLVE
-uint8_t strategy = 1;//先定义为全局变量，后面再优化
+#define CERES_SOLVE
+uint8_t strategy = 3;//先定义为全局变量，后面再优化
 
 Estimator::Estimator(): f_manager{Rs}
 {
@@ -1252,11 +1252,14 @@ void Estimator::optimization()
     ROS_DEBUG("delta3");
 
     cal_delta_x(solver, cur_x_array_before, cur_x_array, delta_x);
-    ROS_DEBUG_STREAM("\ncur_x before: " << cur_x_before.transpose() <<
-                          "\ncur_x after: " << cur_x.transpose() <<
+    TicToc t_print;
+    ROS_DEBUG_STREAM(
+//                          "\ncur_x before: " << cur_x_before.transpose() <<
+//                          "\ncur_x after: " << cur_x.transpose() <<
                           "\ndelta_x: "<< delta_x_map.transpose() <<
                           "\ndelta_x.norm(): " << delta_x_map.norm() <<
                           ",    delta_x.squaredNorm(): " << delta_x_map.squaredNorm());
+    ROS_DEBUG("\nprint costs: %f ms", t_print.toc());
 #endif
 
 

@@ -204,7 +204,7 @@ int Solver::globalSize(int size) const
 }
 
 //线程函数
-void* ThreadsConstructA(void* threadsstruct)
+static void* ThreadsConstructA(void* threadsstruct)
 {
     ThreadsStruct* p = ((ThreadsStruct*)threadsstruct);
 
@@ -243,7 +243,7 @@ void* ThreadsConstructA(void* threadsstruct)
     return threadsstruct;
 }
 
-bool updatePose(const double *x, const double *delta, double *x_plus_delta)
+static bool updatePose(const double *x, const double *delta, double *x_plus_delta)
 {
     Eigen::Map<const Eigen::Vector3d> _p(x);
     Eigen::Map<const Eigen::Quaterniond> _q(x + 3);
@@ -402,10 +402,8 @@ std::vector<double *> Solver::getParameterBlocks(std::unordered_map<long, double
 //求解器相关函数
 bool Solver::solve(int iterations) {
     TicToc t_total_makeHessian;
-    preMakeHessian();
-    //多线程计算在X0处的整个先验项的参数块，雅可比矩阵和残差值
-    //5、多线程构造先验项舒尔补AX=b的结构，在X0处线性化计算Jacobian和残差
-    makeHessian();
+//    preMakeHessian();
+//    makeHessian();
     ROS_DEBUG("\nsolver preMakeHessian + makeHessian %f ms", t_total_makeHessian.toc());
     ROS_DEBUG("\nlinearized_jacobians (rows, cols) = (%lu, %lu)", linearized_jacobians.rows(), linearized_jacobians.cols());
 
@@ -419,11 +417,11 @@ bool Solver::solve(int iterations) {
     //尝试的lambda次数
     try_iter_ = 0;
     //保存LM阻尼阻尼系数lambda
-    file_name_ = "./lambda.csv";
+/*    file_name_ = "./lambda.csv";
     FILE *tmp_fp = fopen(file_name_.data(), "a");
     fprintf(tmp_fp, "iter, lambda\n");
     fflush(tmp_fp);
-    fclose(tmp_fp);
+    fclose(tmp_fp);*/
 
     TicToc t_LM_iter;
     while (!stop && (iter < iterations)) {
@@ -449,7 +447,7 @@ bool Solver::solve(int iterations) {
 
 
             // 优化退出条件1： delta_x_ 很小则退出 原来是1e-6
-            if (delta_x_.squaredNorm() <= 1e-10 || false_cnt > 10) {
+            if (delta_x_.squaredNorm() <= 1e-26 || false_cnt > 100) {
                 stop = true;
                 ROS_DEBUG("\ndelta_x too small: %e, or false_cnt=%d > 10  break", delta_x_.squaredNorm(), false_cnt);//都是在这出去的
                 break;
@@ -458,17 +456,11 @@ bool Solver::solve(int iterations) {
                                       << ", delta_x: " << delta_x_.transpose() );
             }
 
-/*            //直接退出
-            stop = true;
-            break;*/
-
-            // 更新状态量 X = X+ delta_x
             TicToc t_updateStates;
-            updateStates(-1.0);//0.08ms
+            updateStates(-1.0);//0.08ms 1.更新状态 2.preMakeHessian()计算新的residual
             ROS_DEBUG("\nupdateStates cost %f ms", t_updateStates.toc());
 
             // 判断当前步是否可行以及 LM 的 lambda 怎么更新
-            preMakeHessian();//计算更新后的Jacobian和residual
             oneStepSuccess = isGoodStepInLM();//误差是否下降
             // 后续处理
             if (oneStepSuccess) {
@@ -477,6 +469,7 @@ bool Solver::solve(int iterations) {
                 ROS_DEBUG("\nbackupStates cost %f ms", t_backupStates.toc());
 
                 // 在新线性化点 构建 hessian
+
                 makeHessian();
                 // TODO:: 这个判断条件可以丢掉，条件 b_max <= 1e-12 很难达到，这里的阈值条件不应该用绝对值，而是相对值
 //                double b_max = 0.0;
@@ -621,11 +614,12 @@ void Solver::solveLinearSystem() {
 //    delta_x_ = Hessian_.ldlt().solve(b_);
     int pcg_iter_num = Hessian_.rows() * 2; // PCG迭代次数
     delta_x_ = pcgSolver(Hessian_, b_, pcg_iter_num);  //0.3ms
-    ROS_DEBUG("\nsolve equation cost %f ms", t_solve_equation.toc());
+    ROS_DEBUG("\nin solveLinearSystem solve equation cost %f ms", t_solve_equation.toc());
 
     memcpy(delta_x_array_, delta_x_.data(), sizeof(double) * (int)delta_x_.size());//转为数组，供状态更新使用(delta_x_太大)
     ROS_DEBUG_STREAM("\nhere3 solve complete, delta_x_.size()=" << delta_x_.size() << ", delta_x_.norm()= "<< delta_x_.norm()
-                          << ",  delta_x_.squaredNorm()=" << delta_x_.squaredNorm() << "\ndelta_x_:" << delta_x_.transpose() << "\n");
+                          << ",  delta_x_.squaredNorm()=" << delta_x_.squaredNorm() );
+    ROS_DEBUG_STREAM("\ndelta_x_:" << delta_x_.transpose());
 
 }
 
@@ -645,40 +639,34 @@ bool Solver::updateStates(double weight) {
         const long addr = it.first;
         const int idx = it.second;
         const int tmp_param_block_size = parameter_block_size[addr];
-        ROS_DEBUG_STREAM("\nidx: " << idx << ",  tmp_param_block_size: " << tmp_param_block_size);
+/*        ROS_DEBUG_STREAM("\nidx: " << idx << ",  tmp_param_block_size: " << tmp_param_block_size);*/
         //保存一份待优化变量，和delta_x进行数量级对比
         memcpy( &cur_x_array[idx], reinterpret_cast<double *>(addr), sizeof(double) *(int)SIZE_POSE);
         if(tmp_param_block_size == SIZE_POSE) {
-//            double tmp_pose[tmp_param_block_size], delta_pose[tmp_param_block_size];
-//            Eigen::Map<Eigen::VectorXd> tmp_pose {parameter_block_data_backup[addr], tmp_param_block_size};
-            Eigen::Map<Eigen::VectorXd> delta_pose {&delta_x_array_[idx], tmp_param_block_size};
+/*            Eigen::Map<Eigen::VectorXd> delta_pose {&delta_x_array_[idx], tmp_param_block_size};
             Eigen::Map<Eigen::VectorXd> tmp_pose {reinterpret_cast<double *>(addr), tmp_param_block_size};
             for(int i=0;i<tmp_param_block_size;++i){
                 tmp_pose[i] = *(reinterpret_cast<double *>(addr + sizeof(double)*i));
                 delta_pose[i] = delta_x_array_[idx+i];
             }
+            ROS_DEBUG_STREAM("\npose before update: " << tmp_pose.transpose() << "\ndelta_pose: " << delta_pose.transpose());*/
 
-            ROS_DEBUG_STREAM("\npose before update: " << tmp_pose.transpose() << "\ndelta_pose: " << delta_pose.transpose());
-
-//            updatePose(parameter_block_data_backup[addr], &delta_x_array_[idx], reinterpret_cast<double *>(addr));//TODO:这个backup应该可以用parameter_block_data替代
             updatePose(reinterpret_cast<double *>(addr), &delta_x_array_[idx], reinterpret_cast<double *>(addr));//TODO:这个backup应该可以用parameter_block_data替代
 
-//            double tmp_pose_after[tmp_param_block_size];
-//            for(int i=0;i<tmp_param_block_size;++i)
-//                tmp_pose_after[i] = *(reinterpret_cast<double *>(addr + sizeof(double)*i));
-            ROS_DEBUG_STREAM("\npose after update: " << tmp_pose.transpose());
+/*            ROS_DEBUG_STREAM("\npose after update: " << tmp_pose.transpose());*/
         } else {
             Eigen::Map<const Eigen::VectorXd> x{parameter_block_data_backup[addr], tmp_param_block_size};
             Eigen::Map<const Eigen::VectorXd> delta_x{&delta_x_array_[idx], tmp_param_block_size};
             Eigen::Map<Eigen::VectorXd> x_plus_delta{reinterpret_cast<double *>(addr), tmp_param_block_size};
-            ROS_DEBUG_STREAM("\nother parameters before update: " << x_plus_delta.transpose() << "\ndelta_x: " << delta_x.transpose());
+            /*ROS_DEBUG_STREAM("\nother parameters before update: " << x_plus_delta.transpose() << "\ndelta_x: " << delta_x.transpose());*/
             x_plus_delta = x + delta_x;
-            ROS_DEBUG_STREAM("\nother parameters after update: " << x_plus_delta.transpose());
+            /*ROS_DEBUG_STREAM("\nother parameters after update: " << x_plus_delta.transpose());*/
         }
     }
     // 初始化Eigen向量
     Eigen::Map<Eigen::VectorXd> cur_x(cur_x_array, m+n);
     ROS_DEBUG_STREAM("\ncur_x: " << cur_x.transpose());
+    preMakeHessian();//计算更新后的Jacobian和residual
     return true;
 }
 
@@ -697,9 +685,9 @@ bool Solver::rollbackStates() {
     for (auto it : parameter_block_idx){
         const long addr = it.first;
         const int tmp_param_block_size = parameter_block_size[addr];
-//        memcpy(parameter_block_data[addr], parameter_block_data_backup[addr], sizeof(double) * (int)tmp_param_block_size);
         memcpy(reinterpret_cast<double *>(addr), parameter_block_data_backup[addr], sizeof(double) * (int)tmp_param_block_size);
     }
+    preMakeHessian();//计算更新后的Jacobian和residual
     return true;
 }
 
@@ -713,19 +701,23 @@ double Solver::computeChi() const{
     }
     double tmpChi = 0;
     for (auto it : factors){
-        if(it->residuals.size()==prior_dim) {
-            double this_Chi = it->residuals.norm();
-            tmpChi += this_Chi;
-/*            ROS_DEBUG_STREAM("\nprior factor, this_Chi= " << this_Chi
-                              << ",   residuals size: " << it->residuals.size()
-                              << ", residuals: " << it->residuals.transpose());*/
-        } else {
-            double this_Chi = it->residuals.transpose() * it->residuals;
-            tmpChi += this_Chi;
-/*            ROS_DEBUG_STREAM("\nother factor, this_Chi= " << this_Chi
-                              << ",   residuals size: " << it->residuals.size()
-                              << ",   residuals: " << it->residuals.transpose());*/
-        }
+        //TODO：先验的也改成正常更新，按照参数也是PQV来理解先验的话，就应该是正常更新，而不是使用norm(),后面看看对不对
+        double this_Chi = it->residuals.transpose() * it->residuals;
+        tmpChi += this_Chi;
+
+//        if(it->residuals.size()==prior_dim) {
+//            double this_Chi = it->residuals.norm();
+//            tmpChi += this_Chi;
+///*            ROS_DEBUG_STREAM("\nprior factor, this_Chi= " << this_Chi
+//                              << ",   residuals size: " << it->residuals.size()
+//                              << ", residuals: " << it->residuals.transpose());*/
+//        } else {
+//            double this_Chi = it->residuals.transpose() * it->residuals;
+//            tmpChi += this_Chi;
+///*            ROS_DEBUG_STREAM("\nother factor, this_Chi= " << this_Chi
+//                              << ",   residuals size: " << it->residuals.size()
+//                              << ",   residuals: " << it->residuals.transpose());*/
+//        }
     }
     ROS_DEBUG_STREAM("\nhere tmpChi= " << tmpChi);
     return tmpChi;
@@ -762,7 +754,7 @@ void Solver::computeLambdaInitLM() {
               maxDiagonal = std::max(fabs(Hessian_(i, i)), maxDiagonal);//取H矩阵的最大值，然后*涛
           }
 //    double tau = 1e-5;
-          double tau = 1e1;//[1e-8,1] tau越小，△x越大//////////////////////////////////
+          double tau = 1e-14;//[1e-8,1] tau越小，△x越大//////////////////////////////////
           currentLambda_ = tau * maxDiagonal;
           ROS_DEBUG_STREAM("\nin computeLambdaInitLM currentChi_= " << currentChi_
                                                                     << ",  init currentLambda_=" << currentLambda_
@@ -826,8 +818,10 @@ bool Solver::isGoodStepInLM() {
         ROS_DEBUG("\nstrategy1: currentLambda_: %e,rho: %f, currentChi_: %e, tempChi: %e, scale: %e",
                   currentLambda_, rho, currentChi_, tempChi, scale);
         ROS_DEBUG_STREAM("\nret = " << ret <<",  rho>0 = " << (rho>0) <<",  rho: " << rho <<
-                                    ",   delta_x_.squaredNorm(): " << delta_x_.squaredNorm() << ",  delta_x_: " << delta_x_.transpose()
-                                    << "\nb_.norm(): " << b_.norm() << ",  b_: " << b_.transpose());
+                                    ",   delta_x_.squaredNorm(): " << delta_x_.squaredNorm() <<
+                                    ",  delta_x_: " << delta_x_.transpose()<< "\nb_.norm(): " << b_.norm() );
+//        ROS_DEBUG_STREAM("\nb_: " << b_.transpose());
+
     } else if(strategy_==2) {
         // 统计所有的残差
         double tempChi_p_h = 0.0, tempChi_p_alpha_h = 0.0;
@@ -844,6 +838,7 @@ bool Solver::isGoodStepInLM() {
         //回滚刚才更新的x=x+△x，使用α重新更新x=x + α*△x，并重新计算残差和chi
         rollbackStates();
         updateStates(alpha_tmp);
+        preMakeHessian();//更新状态之后就要更新reidual
         tempChi_p_alpha_h = computeChi();
 
         double rho = (currentChi_ - tempChi_p_alpha_h) / scale;
@@ -851,8 +846,7 @@ bool Solver::isGoodStepInLM() {
         if (rho > 0 && isfinite(tempChi_p_alpha_h)) { // last step was good, 误差在下降
             currentLambda_ = std::max(currentLambda_ / (1 + alpha_tmp), 1e-7);
             alpha_ = alpha_tmp;
-            preMakeHessian();
-            currentChi_ = computeChi();
+            currentChi_ = tempChi_p_alpha_h;
             ret = true;
         } else {
             currentLambda_ = currentLambda_ + fabs(tempChi_p_alpha_h - currentChi_) / (2 * alpha_tmp);
@@ -876,7 +870,8 @@ bool Solver::isGoodStepInLM() {
         if (rho > 0 && isfinite(tempChi))   // last step was good, 误差在下降
         {
             double alpha = 1. - pow((2 * rho - 1), 3);//更新策略跟课件里面一样
-            alpha = std::min(alpha, 2. / 3.);
+            //TODO：这个ceres里面应该没有
+//            alpha = std::min(alpha, 2. / 3.);
             double scaleFactor = (std::max)(1. / 3., alpha);
             currentLambda_ *= scaleFactor;//课程里面应该是μ，需要绘制曲线
             ni_ = 2;  //v
@@ -891,10 +886,10 @@ bool Solver::isGoodStepInLM() {
                   currentLambda_, ni_, rho, currentChi_, tempChi, scale);
         ROS_DEBUG_STREAM("\nret = " << ret <<",  rho>0 = " << (rho>0) <<",  rho: " << rho << ",   delta_x_.squaredNorm(): " << delta_x_.squaredNorm() << ",  delta_x_: " << delta_x_.transpose()
                                     << "\nb_.norm(): " << b_.norm() << ",  b_: " << b_.transpose());
-        FILE *fp_lambda = fopen(file_name_.data(), "a");
+/*        FILE *fp_lambda = fopen(file_name_.data(), "a");
         fprintf(fp_lambda, "%d, %f\n", try_iter_, currentLambda_);
         fflush(fp_lambda);
-        fclose(fp_lambda);
+        fclose(fp_lambda);*/
     }
     ROS_DEBUG("\n%d record lambda finish\n", try_iter_);
 
