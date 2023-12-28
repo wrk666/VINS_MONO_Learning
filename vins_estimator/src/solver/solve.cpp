@@ -447,7 +447,7 @@ bool Solver::solve(int iterations) {
 
 
             // 优化退出条件1： delta_x_ 很小则退出 原来是1e-6
-            if (delta_x_.squaredNorm() <= 1e-26 || false_cnt > 100) {
+            if (delta_x_.squaredNorm() <= 1e-15 || false_cnt > 10) {
                 stop = true;
                 ROS_DEBUG("\ndelta_x too small: %e, or false_cnt=%d > 10  break", delta_x_.squaredNorm(), false_cnt);//都是在这出去的
                 break;
@@ -754,7 +754,7 @@ void Solver::computeLambdaInitLM() {
               maxDiagonal = std::max(fabs(Hessian_(i, i)), maxDiagonal);//取H矩阵的最大值，然后*涛
           }
 //    double tau = 1e-5;
-          double tau = 1e-14;//[1e-8,1] tau越小，△x越大//////////////////////////////////
+          double tau = 1e-5;//[1e-8,1] tau越小，△x越大//////////////////////////////////
           currentLambda_ = tau * maxDiagonal;
           ROS_DEBUG_STREAM("\nin computeLambdaInitLM currentChi_= " << currentChi_
                                                                     << ",  init currentLambda_=" << currentLambda_
@@ -870,7 +870,7 @@ bool Solver::isGoodStepInLM() {
         if (rho > 0 && isfinite(tempChi))   // last step was good, 误差在下降
         {
             double alpha = 1. - pow((2 * rho - 1), 3);//更新策略跟课件里面一样
-            //TODO：这个ceres里面应该没有
+            //TODO：这个ceres里面没有限制上限为2/3
 //            alpha = std::min(alpha, 2. / 3.);
             double scaleFactor = (std::max)(1. / 3., alpha);
             currentLambda_ *= scaleFactor;//课程里面应该是μ，需要绘制曲线
