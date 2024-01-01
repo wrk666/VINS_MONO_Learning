@@ -1242,7 +1242,7 @@ void Estimator::optimization()
 
     ROS_DEBUG("delta2");
     TicToc t_solver;
-    solver.solve(8);
+    solver.solve(3);
     ROS_DEBUG("\nmy solver costs: %f ms", t_solver.toc());
 
     get_cur_parameter(solver, cur_x_array);

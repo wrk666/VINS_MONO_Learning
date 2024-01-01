@@ -371,7 +371,7 @@ ROS_INFO("summing up costs %f ms", t_summing.toc());*/
     //ROS_INFO("A diff %f , b diff %f ", (A - tmp_A).sum(), (b - tmp_b).sum());
 
     Hessian_ = A;
-    b_ = b;
+    b_ = -b;
 }
 
 std::vector<double *> Solver::getParameterBlocks(std::unordered_map<long, double *> &addr_shift)
@@ -469,8 +469,9 @@ bool Solver::solve(int iterations) {
                 ROS_DEBUG("\nbackupStates cost %f ms", t_backupStates.toc());
 
                 // 在新线性化点 构建 hessian
-
+                TicToc t_makeHessian;
                 makeHessian();
+                ROS_DEBUG("\nmakeHessian cost %f ms", t_makeHessian.toc());
                 // TODO:: 这个判断条件可以丢掉，条件 b_max <= 1e-12 很难达到，这里的阈值条件不应该用绝对值，而是相对值
 //                double b_max = 0.0;
 //                for (int i = 0; i < b_.size(); ++i) {
@@ -612,9 +613,9 @@ void Solver::solveLinearSystem() {
 
     TicToc t_solve_equation;
 //    delta_x_ = Hessian_.ldlt().solve(b_);
-    int pcg_iter_num = Hessian_.rows() * 2; // PCG迭代次数
+    int pcg_iter_num = Hessian_.rows()+1; // PCG迭代次数,原来给的是rows()*2
     delta_x_ = pcgSolver(Hessian_, b_, pcg_iter_num);  //0.3ms
-    ROS_DEBUG("\nin solveLinearSystem solve equation cost %f ms", t_solve_equation.toc());
+    ROS_DEBUG("\nin solveLinearSystem solve equation cost %f ms, pcg_iter_num: %d", t_solve_equation.toc(), pcg_iter_num);
 
     memcpy(delta_x_array_, delta_x_.data(), sizeof(double) * (int)delta_x_.size());//转为数组，供状态更新使用(delta_x_太大)
     ROS_DEBUG_STREAM("\nhere3 solve complete, delta_x_.size()=" << delta_x_.size() << ", delta_x_.norm()= "<< delta_x_.norm()
@@ -754,7 +755,7 @@ void Solver::computeLambdaInitLM() {
               maxDiagonal = std::max(fabs(Hessian_(i, i)), maxDiagonal);//取H矩阵的最大值，然后*涛
           }
 //    double tau = 1e-5;
-          double tau = 1e-5;//[1e-8,1] tau越小，△x越大//////////////////////////////////
+          double tau = 1e-15;//[1e-8,1] tau越小，△x越大//////////////////////////////////
           currentLambda_ = tau * maxDiagonal;
           ROS_DEBUG_STREAM("\nin computeLambdaInitLM currentChi_= " << currentChi_
                                                                     << ",  init currentLambda_=" << currentLambda_
@@ -899,8 +900,9 @@ bool Solver::isGoodStepInLM() {
 /*
 * @brief conjugate gradient with perconditioning
 *
-*  the jacobi PCG method
-*
+*  the jacobi PCG method  共轭梯度法
+*  知乎有一篇帖子是针对PCG进行改进的，能减少迭代次数：对角线预处理和不完备的Cholesky预处理
+ * https://zhuanlan.zhihu.com/p/521753443
 */
 Eigen::MatrixXd Solver::pcgSolver(const MatXX &A, const VecX &b, int maxIter = -1) {
     assert(A.rows() == A.cols() && "PCG solver ERROR: A is not a square matrix");
@@ -916,7 +918,7 @@ Eigen::MatrixXd Solver::pcgSolver(const MatXX &A, const VecX &b, int maxIter = -
     double alpha = r0z0 / p.dot(w);
     VecX r1 = r0 - alpha * w;
     int i = 0;
-    double threshold = 1e-6 * r0.norm();
+    double threshold = 1e-5 * r0.norm(); //比例调大可以提高阈值，放宽停止条件
     while (r1.norm() > threshold && i < n) {
         i++;
         VecX z1 = M_inv * r1;
@@ -931,6 +933,7 @@ Eigen::MatrixXd Solver::pcgSolver(const MatXX &A, const VecX &b, int maxIter = -
         x += alpha * p;
         r1 -= alpha * w;
     }
+    ROS_DEBUG("\nPCG iter times: %d, n: %d, r1.norm(): %f, threshold: %f", i, n, r1.norm(), threshold);
     return x;
 }
 
