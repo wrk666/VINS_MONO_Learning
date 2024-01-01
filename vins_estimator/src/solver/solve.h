@@ -101,7 +101,7 @@ public:
     double ni_;                 //strategy3控制 Lambda 缩放大小
     std::string file_name_;
     int try_iter_;
-
+    int false_theshold_;//每轮迭代允许的最大失败次数
     //求解结果
 //    VecX delta_x_rr_;
 //    VecX delta_x_mm_;

@@ -2,7 +2,7 @@
 #include "solver/solve.h"
 
 //#define CERES_SOLVE
-uint8_t strategy = 3;//先定义为全局变量，后面再优化
+uint8_t strategy = 1;//先定义为全局变量，后面再优化
 
 Estimator::Estimator(): f_manager{Rs}
 {

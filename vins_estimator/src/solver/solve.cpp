@@ -416,12 +416,23 @@ bool Solver::solve(int iterations) {
     int iter = 0;
     //尝试的lambda次数
     try_iter_ = 0;
+
+    if(strategy_==1) {
+        false_theshold_ = 10;
+    } else if(strategy_==2) {
+        false_theshold_ = 10;
+    } else if (strategy_==3) {
+        false_theshold_ = 6;
+    }
+    ROS_DEBUG("\nstrategy: %d, false_theshold_: %d", strategy_, false_theshold_);
     //保存LM阻尼阻尼系数lambda
 /*    file_name_ = "./lambda.csv";
     FILE *tmp_fp = fopen(file_name_.data(), "a");
     fprintf(tmp_fp, "iter, lambda\n");
     fflush(tmp_fp);
     fclose(tmp_fp);*/
+
+
 
     TicToc t_LM_iter;
     while (!stop && (iter < iterations)) {
@@ -447,7 +458,8 @@ bool Solver::solve(int iterations) {
 
 
             // 优化退出条件1： delta_x_ 很小则退出 原来是1e-6
-            if (delta_x_.squaredNorm() <= 1e-10 || false_cnt > 6) {
+
+            if (delta_x_.squaredNorm() <= 1e-10 || false_cnt > false_theshold_) {
                 stop = true;
                 ROS_DEBUG("\ndelta_x too small: %e, or false_cnt=%d > 10  break", delta_x_.squaredNorm(), false_cnt);//都是在这出去的
                 break;
