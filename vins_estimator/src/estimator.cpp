@@ -1127,11 +1127,13 @@ void Estimator::optimization()
         int feature_index = -1;
         for (auto &it_per_id : f_manager.feature)
         {
+            ROS_DEBUG("\nfeature_id: %d", it_per_id.feature_id);
             it_per_id.used_num = it_per_id.feature_per_frame.size();
             if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
                 continue;
             ++feature_index;
             int start = it_per_id.start_frame;
+            ROS_DEBUG("\nmatch_points size: %lu", match_points.size());
             if(start <= relo_frame_local_index)//必须之前看到过
             {
                 //1.先在i中match的点中找到可能是现在这个feature的id的index
@@ -1139,6 +1141,7 @@ void Estimator::optimization()
                 {
                     retrive_feature_index++;
                 }
+                ROS_DEBUG("\nrelo here1");
                 //2.如果是，则WINDOW内的it_per_id.feature_id这个id的landmark就是被loop上的landmark,取归一化坐标，
                 if((int)match_points[retrive_feature_index].z() == it_per_id.feature_id)
                 {
@@ -1164,12 +1167,14 @@ void Estimator::optimization()
                     param_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
                     landmark_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
 #else
+                    ROS_DEBUG("\nrelo here2");
                     solver::ResidualBlockInfo *residual_block_info = new solver::ResidualBlockInfo(f, loss_function,
                                                                                                    vector<double*>{para_Pose[start], relo_Pose, para_Ex_Pose[0], para_Feature[feature_index]},
                                                                                                    vector<int>{});
                     solver.addResidualBlockInfo(residual_block_info);
 #endif
                     retrive_feature_index++;
+                    ROS_DEBUG("\nrelo here3");
                 }     
             }
         }
@@ -1225,7 +1230,6 @@ void Estimator::optimization()
 
     //cout << summary.BriefReport() << endl;
     ROS_DEBUG("\nIterations : %d", static_cast<int>(summary.iterations.size()));
-    ROS_DEBUG("\nVINS solver costs: %f ms", t_solver.toc());
 
 #else //手写求解器求解
     ROS_DEBUG("delta1");
@@ -1242,8 +1246,12 @@ void Estimator::optimization()
 
     ROS_DEBUG("delta2");
     TicToc t_solver;
-    solver.solve(3);
-    ROS_DEBUG("\nmy solver costs: %f ms", t_solver.toc());
+    solver.solve(NUM_ITERATIONS);
+    double vins_finish_time = t_solver.toc();
+    solver_time_sum_ += vins_finish_time;
+    ++solve_times_;
+    ROS_DEBUG("\nmy solver costs: %f ms, iter nums: %d, avg_solve_time: %f ms, solver_time_sum_: %f, solve_times_: %f",
+              vins_finish_time, NUM_ITERATIONS, solver_time_sum_/solve_times_, solver_time_sum_, solve_times_);
 
     get_cur_parameter(solver, cur_x_array);
     double delta_x[cur_x_size];

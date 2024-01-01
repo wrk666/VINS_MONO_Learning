@@ -121,6 +121,9 @@ public:
 
     //策略2更新使用的alpha
     double alpha_;
+
+    double makeHessian_time_sum_;//这个需要手撸才能统计时间，ceres无法统计
+    double makeHessian_times_;
 };
 
 

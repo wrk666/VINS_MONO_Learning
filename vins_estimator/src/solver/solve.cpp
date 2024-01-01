@@ -447,7 +447,7 @@ bool Solver::solve(int iterations) {
 
 
             // 优化退出条件1： delta_x_ 很小则退出 原来是1e-6
-            if (delta_x_.squaredNorm() <= 1e-15 || false_cnt > 10) {
+            if (delta_x_.squaredNorm() <= 1e-10 || false_cnt > 6) {
                 stop = true;
                 ROS_DEBUG("\ndelta_x too small: %e, or false_cnt=%d > 10  break", delta_x_.squaredNorm(), false_cnt);//都是在这出去的
                 break;
@@ -471,7 +471,11 @@ bool Solver::solve(int iterations) {
                 // 在新线性化点 构建 hessian
                 TicToc t_makeHessian;
                 makeHessian();
-                ROS_DEBUG("\nmakeHessian cost %f ms", t_makeHessian.toc());
+                double makeHessian_finish_time = t_makeHessian.toc();
+                makeHessian_time_sum_ += makeHessian_finish_time;
+                ++makeHessian_times_;
+                ROS_DEBUG("\nmakeHessian cost: %f ms, avg_makeHessian_time: %f ms, makeHessian_time_sum_: %f, makeHessian_times_: %f",
+                          makeHessian_finish_time, makeHessian_time_sum_/makeHessian_times_, makeHessian_time_sum_, makeHessian_times_);
                 // TODO:: 这个判断条件可以丢掉，条件 b_max <= 1e-12 很难达到，这里的阈值条件不应该用绝对值，而是相对值
 //                double b_max = 0.0;
 //                for (int i = 0; i < b_.size(); ++i) {
@@ -872,7 +876,7 @@ bool Solver::isGoodStepInLM() {
         {
             double alpha = 1. - pow((2 * rho - 1), 3);//更新策略跟课件里面一样
             //TODO：这个ceres里面没有限制上限为2/3
-//            alpha = std::min(alpha, 2. / 3.);
+            alpha = std::min(alpha, 2. / 3.);
             double scaleFactor = (std::max)(1. / 3., alpha);
             currentLambda_ *= scaleFactor;//课程里面应该是μ，需要绘制曲线
             ni_ = 2;  //v

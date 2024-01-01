@@ -148,4 +148,8 @@ class Estimator
     double relo_relative_yaw;
 
     int l_ = 0;
+
+    //用于统计求解时间
+    double solver_time_sum_;
+    double solve_times_;
 };
