@@ -2,7 +2,7 @@
 #include "solver/solve.h"
 
 //#define CERES_SOLVE
-uint8_t strategy = 1;//先定义为全局变量，后面再优化
+uint8_t strategy = 3;//先定义为全局变量，后面再优化
 
 Estimator::Estimator(): f_manager{Rs}
 {
@@ -804,7 +804,7 @@ bool Estimator::failureDetection()
 }
 
 //获得当前优化参数，按照自定义solver中的排列方式排列
-static void get_cur_parameter(solver::Solver& solver, double* cur_x_array) {
+static void get_cur_parameter(solve::Solver& solver, double* cur_x_array) {
     for (auto it : solver.parameter_block_idx) {
         const long addr = it.first;
         const int idx = it.second;
@@ -833,7 +833,7 @@ static bool updatePose(const double *x, const double *delta, double *x_plus_delt
 }
 
 //计算ceres优化iteration轮之后的delta_x, solver要传引用，否则会调用析构函数
-static void cal_delta_x(solver::Solver& solver, double* x_before, double* x_after, double* delta_x) {
+static void cal_delta_x(solve::Solver& solver, double* x_before, double* x_after, double* delta_x) {
     for (auto it : solver.parameter_block_idx) {
         const long addr = it.first;
         const int idx = it.second;
@@ -868,9 +868,16 @@ void Estimator::optimization()
 
     //自己写的solver
 
-    solver::Solver solver(strategy);
-#ifdef CERES_SOLVE
+    solve::Solver solver(strategy);
+    solver.method_ = solve::Solver::kDOGLEG;
+    solver.iterations_ = NUM_ITERATIONS;
+    if(solver.method_==solve::Solver::kDOGLEG) {
+        solver.epsilon_1_ = 1e-10;
+        solver.epsilon_2_ = 1e-6;//h_dl和radius_减小的倍数阈值
+        solver.epsilon_3_ = 1e-10;
+    }
 
+#ifdef CERES_SOLVE
     //添加ceres参数块
     //因为ceres用的是double数组，所以在下面用vector2double做类型装换
     //Ps、Rs转变成para_Pose，Vs、Bas、Bgs转变成para_SpeedBias
@@ -902,12 +909,8 @@ void Estimator::optimization()
     }
 
 #else
-    //自己写的solver如何固定住外参呢？
-//    solver::Solver solver;
-
+    //自己写的solver如何固定住外参呢？不加入ResidualBlockInfo即可
 #endif
-
-
 
     TicToc t_whole, t_prepare;
     vector2double();
@@ -946,7 +949,7 @@ void Estimator::optimization()
 
 #else
         //dropset用于指定求解时需要Schur消元的变量，即landmark
-        solver::ResidualBlockInfo *residual_block_info = new solver::ResidualBlockInfo(marginalization_factor, NULL,
+        solve::ResidualBlockInfo *residual_block_info = new solve::ResidualBlockInfo(marginalization_factor, NULL,
                                                                        last_marginalization_parameter_blocks,
                                                                                        vector<int>{});
         solver.addResidualBlockInfo(residual_block_info);
@@ -998,8 +1001,8 @@ void Estimator::optimization()
             }
         }
 #else
-        solver::ResidualBlockInfo *residual_block_info =
-                new solver::ResidualBlockInfo(imu_factor, NULL,
+        solve::ResidualBlockInfo *residual_block_info =
+                new solve::ResidualBlockInfo(imu_factor, NULL,
                                               vector<double *>{para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j]},
                                               vector<int>{});
         solver.addResidualBlockInfo(residual_block_info);
@@ -1070,7 +1073,7 @@ void Estimator::optimization()
                     f_td->check(para);
                     */
 #else
-                solver::ResidualBlockInfo *residual_block_info = new solver::ResidualBlockInfo(f_td, loss_function,
+                solve::ResidualBlockInfo *residual_block_info = new solve::ResidualBlockInfo(f_td, loss_function,
                                                                                 vector<double*>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index], para_Td[0]},
                                                                                                vector<int>{});
                 solver.addResidualBlockInfo(residual_block_info);
@@ -1094,7 +1097,7 @@ void Estimator::optimization()
                 param_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
                 landmark_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
 #else
-                solver::ResidualBlockInfo *residual_block_info = new solver::ResidualBlockInfo(f, loss_function,
+                solve::ResidualBlockInfo *residual_block_info = new solve::ResidualBlockInfo(f, loss_function,
                                                                                 vector<double*>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]},
                                                                                                vector<int>{});
                 solver.addResidualBlockInfo(residual_block_info);
@@ -1133,15 +1136,15 @@ void Estimator::optimization()
                 continue;
             ++feature_index;
             int start = it_per_id.start_frame;
-            ROS_DEBUG("\nmatch_points size: %lu", match_points.size());
+            ROS_DEBUG("\nmatch_points size: %lu, retrive_feature_index: %d", match_points.size(), retrive_feature_index);
             if(start <= relo_frame_local_index)//必须之前看到过
             {
                 //1.先在i中match的点中找到可能是现在这个feature的id的index
-                while((int)match_points[retrive_feature_index].z() < it_per_id.feature_id)//.z()存的是i，j两帧match上的feature的id
+                while((int)match_points[retrive_feature_index].z() < it_per_id.feature_id && retrive_feature_index <= match_points.size()-2)//.z()存的是i，j两帧match上的feature的id
                 {
                     retrive_feature_index++;
                 }
-                ROS_DEBUG("\nrelo here1");
+                ROS_DEBUG("\nrelo here1, retrive_feature_index: %d", retrive_feature_index);
                 //2.如果是，则WINDOW内的it_per_id.feature_id这个id的landmark就是被loop上的landmark,取归一化坐标，
                 if((int)match_points[retrive_feature_index].z() == it_per_id.feature_id)
                 {
@@ -1168,16 +1171,17 @@ void Estimator::optimization()
                     landmark_addr_check[reinterpret_cast<long>(para_Feature[feature_index])] = 1;
 #else
                     ROS_DEBUG("\nrelo here2");
-                    solver::ResidualBlockInfo *residual_block_info = new solver::ResidualBlockInfo(f, loss_function,
+                    solve::ResidualBlockInfo *residual_block_info = new solve::ResidualBlockInfo(f, loss_function,
                                                                                                    vector<double*>{para_Pose[start], relo_Pose, para_Ex_Pose[0], para_Feature[feature_index]},
                                                                                                    vector<int>{});
                     solver.addResidualBlockInfo(residual_block_info);
 #endif
                     retrive_feature_index++;
                     ROS_DEBUG("\nrelo here3");
-                }     
+                }
             }
         }
+        ROS_DEBUG("\nrelo here4");
     }
 #ifdef CERES_SOLVE
     size_t size_4 = param_addr_check.size() - size_1 - size_2 - size_3;//没有loop时应该为0
@@ -1232,11 +1236,11 @@ void Estimator::optimization()
     ROS_DEBUG("\nIterations : %d", static_cast<int>(summary.iterations.size()));
 
 #else //手写求解器求解
-    ROS_DEBUG("delta1");
+    ROS_DEBUG("\ndelta0");
     solver.preMakeHessian();
     solver.makeHessian();
 
-    ROS_DEBUG("delta1");
+    ROS_DEBUG("\ndelta1");
     int cur_x_size = 1000 + (WINDOW_SIZE + 1) * (SIZE_POSE + SIZE_SPEEDBIAS) + SIZE_POSE + 1 + 100;
     double cur_x_array[cur_x_size], cur_x_array_before[cur_x_size];
     get_cur_parameter(solver, cur_x_array);
@@ -1244,9 +1248,9 @@ void Estimator::optimization()
     Eigen::Map<Eigen::VectorXd> cur_x(cur_x_array, solver.m + solver.n);//cur_x_array变了，cur_x才会变
     const Eigen::VectorXd cur_x_before = cur_x;
 
-    ROS_DEBUG("delta2");
+    ROS_DEBUG("\ndelta2");
     TicToc t_solver;
-    solver.solve(NUM_ITERATIONS);
+    solver.solve();
     double vins_finish_time = t_solver.toc();
     solver_time_sum_ += vins_finish_time;
     ++solve_times_;
@@ -1257,7 +1261,7 @@ void Estimator::optimization()
     double delta_x[cur_x_size];
     Eigen::Map<Eigen::VectorXd> delta_x_map(delta_x, solver.m + solver.n);
 
-    ROS_DEBUG("delta3");
+    ROS_DEBUG("\ndelta3");
 
     cal_delta_x(solver, cur_x_array_before, cur_x_array, delta_x);
     TicToc t_print;

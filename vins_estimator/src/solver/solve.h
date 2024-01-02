@@ -16,7 +16,7 @@
 #include "../utility/tic_toc.h"
 #include "../parameters.h"
 
-namespace solver {
+namespace solve {
 
 /*定义factor管理类
  * */
@@ -56,7 +56,7 @@ struct ThreadsStruct
 class Solver
 {
 public:
-    Solver(uint8_t strategy): strategy_(strategy), alpha_(1), mem_allocated_(false){};
+    Solver(uint8_t strategy): method_(kLM), iterations_(1), strategy_(strategy), lm_alpha_(1), mem_allocated_(false){};
     ~Solver();
     int localSize(int size) const;
     int globalSize(int size) const;
@@ -82,7 +82,8 @@ public:
     Eigen::VectorXd linearized_residuals;//线性化点处的residual
     const double eps = 1e-8;
 
-    bool solve(int iterations);
+
+    bool solve();
     void solveLinearSystem();/// 解线性方程
     bool updateStates(double weight) ;/// 更新状态变量
     bool backupStates();//回滚状态变量
@@ -94,17 +95,33 @@ public:
     bool isGoodStepInLM();/// LM 算法中用于判断 Lambda 在上次迭代中是否可以，以及Lambda怎么缩放
     Eigen::MatrixXd pcgSolver(const MatXX &A, const VecX &b, int maxIter);/// PCG 迭代线性求解器
 
-
-    double currentLambda_;
+    enum SolveMethod
+    {
+        kLM = 0,
+        kDOGLEG = 1
+    };
+    SolveMethod method_;
+    int iterations_;//迭代轮数
     double currentChi_;
+
+    //LM参数
+    double currentLambda_;//LM中的阻尼因子，DOGLEG中的radius
     double stopThresholdLM_;    // LM 迭代退出阈值条件
-    double ni_;                 //strategy3控制 Lambda 缩放大小
     std::string file_name_;
     int try_iter_;
     int false_theshold_;//每轮迭代允许的最大失败次数
+    double ni_;       //strategy3控制 Lambda 缩放大小
+    double lm_alpha_; //strategy2更新使用的alpha
+
+
     //求解结果
 //    VecX delta_x_rr_;
 //    VecX delta_x_mm_;
+
+    //DL参数
+    double radius_;
+    double epsilon_1_, epsilon_2_, epsilon_3_;
+//    double dl_alpha_;
 
     /// 整个信息矩阵
     Eigen::MatrixXd Hessian_;
@@ -112,6 +129,8 @@ public:
     Eigen::VectorXd delta_x_;
 
     //多留100的余量，这个是成员变量，在程序中是局部变量，放在栈区，不需要手动释放内存，因为它会在其作用域结束时自动被销毁
+    const int x_size_ = 1000 + (WINDOW_SIZE + 1) * (SIZE_POSE + SIZE_SPEEDBIAS) + SIZE_POSE + 1 + 100;
+    double cur_x_array_[1000 + (WINDOW_SIZE + 1) * (SIZE_POSE + SIZE_SPEEDBIAS) + SIZE_POSE + 1 + 100];
     double delta_x_array_[1000 + (WINDOW_SIZE + 1) * (SIZE_POSE + SIZE_SPEEDBIAS) + SIZE_POSE + 1 + 100];
 
     //是否已调用preMakeHessian分配过内存
@@ -119,153 +138,16 @@ public:
 
     uint8_t strategy_;
 
-    //策略2更新使用的alpha
-    double alpha_;
+
 
     double makeHessian_time_sum_;//这个需要手撸才能统计时间，ceres无法统计
     double makeHessian_times_;
-};
 
-
-//
-////定义求解器类
-//class Solver{
-//public:
-//    typedef unsigned long ulong;
-//    SolverInfo *solver_info_;
-//
-//    enum class ProblemType {
-//        SLAM_PROBLEM,
-//        GENERIC_PROBLEM
-//    };
-//
-//    //构造
-//    Solver():solver_info_(new solver::SolverInfo()) {};
-//
-///**
-//* 求解此问题
-//* @param iterations
-//* @return
-//*/
-//    bool solve(int iterations);
-//
-//
-//
-//private:
-//
-//    /// Solve的实现，解通用问题
-//    bool SolveGenericProblem(int iterations);
-//
-//    /// Solve的实现，解SLAM问题
-//    bool SolveSLAMProblem(int iterations);
-//
-//    /// 设置各顶点的ordering_index
-//    void setOrdering();
-//
-///*    /// set ordering for new vertex in slam problem
-//    void AddOrderingSLAM(std::shared_ptr<Vertex> v);*/
-//
-//    /// 构造大H矩阵
-//    void makeHessian();
-//
-//    /// schur求解SBA  //TODO：先直接求逆，等跑通了再用Schur来求
-//    void SchurSBA();
-//
-//    /// 解线性方程
-//    void solveLinearSystem();
-//
-//    /// 更新状态变量
-//    void updateStates();
-//
-//    void rollbackStates(); // 有时候 update 后残差会变大，需要退回去，重来
-//
-///*    /// 计算并更新Prior部分
-//    void ComputePrior();
-//
-//    /// 判断一个顶点是否为Pose顶点
-//    bool IsPoseVertex(std::shared_ptr<Vertex> v);
-//
-//    /// 判断一个顶点是否为landmark顶点
-//    bool IsLandmarkVertex(std::shared_ptr<Vertex> v);
-//
-//    /// 在新增顶点后，需要调整几个hessian的大小
-//    void ResizePoseHessiansWhenAddingPose(std::shared_ptr<Vertex> v);
-//
-//    /// 检查ordering是否正确
-//    bool CheckOrdering();
-//
-//    void LogoutVectorSize();
-//
-//    /// 获取某个顶点连接到的边
-//    std::vector<std::shared_ptr<Edge>> GetConnectedEdges(std::shared_ptr<Vertex> vertex);*/
-//
-//    /// Levenberg
-//    /// 计算LM算法的初始Lambda
-//    void computeLambdaInitLM();
-//
-//    /// Hessian 对角线加上或者减去  Lambda
-//    void addLambdatoHessianLM();
-//
-//    void removeLambdaHessianLM();
-//
-//    /// LM 算法中用于判断 Lambda 在上次迭代中是否可以，以及Lambda怎么缩放
-//    bool isGoodStepInLM();
-//
-//    /// PCG 迭代线性求解器
-//    VecX pcgSolver(const MatXX &A, const VecX &b, int maxIter);
-//
-//    double currentLambda_;
-//    double currentChi_;
-//    double stopThresholdLM_;    // LM 迭代退出阈值条件
-//    double ni_;                 //控制 Lambda 缩放大小
-//    std::string file_name_;
-//    int try_iter_;
-//
-//    ProblemType problemType_;
-//
-//    /// 整个信息矩阵
-//    MatXX Hessian_;
-//    VecX b_;
-//    VecX delta_x_;
-//
-//    /// 先验部分信息
-//    MatXX H_prior_;
-//    VecX b_prior_;
-//    MatXX Jt_prior_inv_;
-//    VecX err_prior_;
-//
-//    /// SBA的Pose部分
-//    MatXX H_pp_schur_;
-//    VecX b_pp_schur_;
-//    // Heesian 的 Landmark 和 pose 部分
-//    MatXX H_pp_;
-//    VecX b_pp_;
-//    MatXX H_ll_;
-//    VecX b_ll_;
-//
-///*    /// all vertices
-//    HashVertex verticies_;
-//
-//    /// all edges
-//    HashEdge edges_;
-//
-//    /// 由vertex id查询edge
-//    HashVertexIdToEdge vertexToEdge_;*/
-//
-//    /// Ordering related
-//    ulong ordering_poses_ = 0;
-//    ulong ordering_landmarks_ = 0;
-//    ulong ordering_generic_ = 0;
-///*    std::map<unsigned long, std::shared_ptr<Vertex>> idx_pose_vertices_;        // 以ordering排序的pose顶点
-//    std::map<unsigned long, std::shared_ptr<Vertex>> idx_landmark_vertices_;    // 以ordering排序的landmark顶点
-//
-//    // verticies need to marg. <Ordering_id_, Vertex>
-//    HashVertex verticies_marg_;//需要边缘化的vertex*/
-//
-//    bool bDebug = false;
-//    double t_hessian_cost_ = 0.0;
-//    double t_PCGsovle_cost_ = 0.0;
-//};
+private:
+    bool get_cur_parameter(double* cur_x_array);
+    double dlComputeDenom(const Eigen::VectorXd& h_dl, const Eigen::VectorXd& h_gn,
+                                  const double dl_alpha, const double dl_beta) const;
+    };
 
 }
 
