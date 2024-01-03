@@ -3,7 +3,7 @@
 #common parameters
 imu_topic: "/imu0"
 image_topic: "/cam0/image_raw"
-output_path: "/home/wrk/File/SLAM/My_course/VIO/Output/Test/My_DL_iter_2/" #输出文件的路径
+output_path: "/home/wrk/File/SLAM/My_course/VIO/Output/Test/My_DL_iter_2_EigenSolver/" #输出文件的路径
 
 #camera calibration 
 model_type: PINHOLE

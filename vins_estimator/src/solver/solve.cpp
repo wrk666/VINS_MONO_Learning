@@ -376,22 +376,15 @@ ROS_INFO("summing up costs %f ms", t_summing.toc());*/
     //反解出J和e
     TicToc t_solve_J;
     TicToc t_SelfAdjoint;
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes2(A);
-    Eigen::VectorXd S = Eigen::VectorXd((saes2.eigenvalues().array() > eps).select(saes2.eigenvalues().array(), 0));
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes2(A);//这一句24.3ms
     ROS_DEBUG("\nt_SelfAdjoint cost: %f ms", t_SelfAdjoint.toc());
-
-    TicToc t_jacobians;
+    Eigen::VectorXd S = Eigen::VectorXd((saes2.eigenvalues().array() > eps).select(saes2.eigenvalues().array(), 0));
     Eigen::VectorXd S_sqrt = S.cwiseSqrt();//开根号
     linearized_jacobians = S_sqrt.asDiagonal() * saes2.eigenvectors().transpose();
-    ROS_DEBUG("\nt_jacobians cost: %f ms", t_jacobians.toc());
-
-    TicToc t_residuals;
     Eigen::VectorXd S_inv = Eigen::VectorXd((saes2.eigenvalues().array() > eps).select(saes2.eigenvalues().array().inverse(), 0));
     Eigen::VectorXd S_inv_sqrt = S_inv.cwiseSqrt();
-    linearized_residuals = S_inv_sqrt.asDiagonal() * saes2.eigenvectors().transpose() * b;
-    ROS_DEBUG("\nt_residuals cost: %f ms", t_residuals.toc());
-
-    ROS_DEBUG("\nt_solve_J cost: %f ms", t_solve_J.toc());//22ms,太久了
+    linearized_residuals = S_inv_sqrt.asDiagonal() * saes2.eigenvectors().real().transpose() * b;
+    ROS_DEBUG("\nt_solve_J cost: %f ms", t_solve_J.toc());//25ms
 }
 
 std::vector<double *> Solver::getParameterBlocks(std::unordered_map<long, double *> &addr_shift)
@@ -991,8 +984,8 @@ std::cout << "   makeHessian cost: " << t_hessian_cost_ << " ms" << std::endl;*/
         epsilon_1_ = 1e-10;
         //向量无穷范数：cwiseAbs："coordinate-wise"（逐元素）取绝对值，colwise().sum()计算每行的绝对值之和，maxCoeff()得最大值
         bool use_last_hessian = true;
-        bool stop = (linearized_residuals.cwiseAbs().colwise().sum().maxCoeff() < epsilon_3_) ||
-                    (b_.cwiseAbs().colwise().sum().maxCoeff() <= epsilon_1_);
+        bool stop = (linearized_residuals.lpNorm<Eigen::Infinity>() < epsilon_3_) ||
+                    (b_.lpNorm<Eigen::Infinity>() <= epsilon_1_);
         int iter = 0;
         double rho, tempChi;
         double rho_numerator, rho_denominator;
