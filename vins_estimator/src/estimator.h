@@ -152,4 +152,7 @@ class Estimator
     //用于统计求解时间
     double solver_time_sum_;
     double solve_times_;
+
+    double makeHessian_time_sum_;
+    double makeHessian_times_;
 };

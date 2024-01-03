@@ -85,6 +85,7 @@ public:
 
     bool solve();
     void solveLinearSystem();/// 解线性方程
+    bool updatePose(const double *x, const double *delta, double *x_plus_delta);
     bool updateStates(double weight) ;/// 更新状态变量
     bool backupStates();//回滚状态变量
     bool rollbackStates(); // 有时候 update 后残差会变大，需要退回去，重来
@@ -92,8 +93,8 @@ public:
     void computeLambdaInitLM();/// 计算LM算法的初始Lambda
     void addLambdatoHessianLM();/// Hessian 对角线加上或者减去  Lambda
     void removeLambdaHessianLM();
-    bool isGoodStepInLM();/// LM 算法中用于判断 Lambda 在上次迭代中是否可以，以及Lambda怎么缩放
     Eigen::MatrixXd pcgSolver(const MatXX &A, const VecX &b, int maxIter);/// PCG 迭代线性求解器
+    bool isGoodStepInLM();/// LM 算法中用于判断 Lambda 在上次迭代中是否可以，以及Lambda怎么缩放
 
     enum SolveMethod
     {
@@ -140,8 +141,8 @@ public:
 
 
 
-    double makeHessian_time_sum_;//这个需要手撸才能统计时间，ceres无法统计
-    double makeHessian_times_;
+    double *makeHessian_time_sum_;//这个需要手撸才能统计时间，ceres无法统计
+    double *makeHessian_times_;
 
 private:
     bool get_cur_parameter(double* cur_x_array);

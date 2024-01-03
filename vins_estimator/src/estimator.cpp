@@ -871,11 +871,14 @@ void Estimator::optimization()
     solve::Solver solver(strategy);
     solver.method_ = solve::Solver::kDOGLEG;
     solver.iterations_ = NUM_ITERATIONS;
+    solver.makeHessian_time_sum_ = &(makeHessian_time_sum_);
+    solver.makeHessian_times_ = &makeHessian_times_;
     if(solver.method_==solve::Solver::kDOGLEG) {
         solver.epsilon_1_ = 1e-10;
         solver.epsilon_2_ = 1e-6;//h_dl和radius_减小的倍数阈值
         solver.epsilon_3_ = 1e-10;
     }
+
 
 #ifdef CERES_SOLVE
     //添加ceres参数块
@@ -1075,7 +1078,7 @@ void Estimator::optimization()
 #else
                 solve::ResidualBlockInfo *residual_block_info = new solve::ResidualBlockInfo(f_td, loss_function,
                                                                                 vector<double*>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index], para_Td[0]},
-                                                                                               vector<int>{});
+                                                                                               vector<int>{3});
                 solver.addResidualBlockInfo(residual_block_info);
 #endif
             }
@@ -1099,7 +1102,7 @@ void Estimator::optimization()
 #else
                 solve::ResidualBlockInfo *residual_block_info = new solve::ResidualBlockInfo(f, loss_function,
                                                                                 vector<double*>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]},
-                                                                                               vector<int>{});
+                                                                                               vector<int>{3});
                 solver.addResidualBlockInfo(residual_block_info);
 #endif
             }
