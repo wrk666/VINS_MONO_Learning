@@ -2,7 +2,6 @@
 #include "solver/solve.h"
 
 //#define CERES_SOLVE
-uint8_t strategy = 3;//先定义为全局变量，后面再优化
 
 Estimator::Estimator(): f_manager{Rs}
 {
@@ -868,8 +867,8 @@ void Estimator::optimization()
 
     //自己写的solver
 
-    solve::Solver solver(strategy);
-    solver.method_ = solve::Solver::kDOGLEG;
+    solve::Solver solver(LM_STRATEGY);
+    solver.method_ = SOLVER_TYPE == "DOGLEG" ? solve::Solver::kDOGLEG : solve::Solver::kLM;
     solver.iterations_ = NUM_ITERATIONS;
     solver.makeHessian_time_sum_ = &(makeHessian_time_sum_);
     solver.makeHessian_times_ = &makeHessian_times_;
@@ -1196,7 +1195,7 @@ void Estimator::optimization()
     options.linear_solver_type = ceres::DENSE_SCHUR;
     //options.num_threads = 2;
 //    options.trust_region_strategy_type = ceres::DOGLEG;//狗腿算法，与LM较为接近
-    options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;//LM
+    options.trust_region_strategy_type = SOLVER_TYPE == "DOGLEG" ? ceres::DOGLEG : ceres::LEVENBERG_MARQUARDT;//LM
     options.max_num_iterations = NUM_ITERATIONS;
     //options.use_explicit_schur_complement = true;
     //options.minimizer_progress_to_stdout = true;
@@ -1205,7 +1204,6 @@ void Estimator::optimization()
         options.max_solver_time_in_seconds = SOLVER_TIME * 4.0 / 5.0;
     else
         options.max_solver_time_in_seconds = SOLVER_TIME;
-    TicToc t_solver;
     ceres::Solver::Summary summary;
 
 /*    //获得idx和data
@@ -1220,9 +1218,13 @@ void Estimator::optimization()
     Eigen::Map<Eigen::VectorXd> cur_x(cur_x_array, solver.m + solver.n);//cur_x_array变了，cur_x才会变
     const Eigen::VectorXd cur_x_before = cur_x;*/
 
-    ROS_DEBUG("delta2");
+    TicToc t_solver;
     ceres::Solve(options, &problem, &summary);
-    ROS_DEBUG("delta3");
+    double vins_finish_time = t_solver.toc();
+    solver_time_sum_ += vins_finish_time;
+    ++solve_times_;
+    ROS_DEBUG("\nmy solver costs: %f ms, iter nums: %d, avg_solve_time: %f ms, solver_time_sum_: %f, solve_times_: %f",
+              vins_finish_time, NUM_ITERATIONS, solver_time_sum_/solve_times_, solver_time_sum_, solve_times_);
 
 /*    get_cur_parameter(solver, cur_x_array);
     double delta_x_ceres[cur_x_size];

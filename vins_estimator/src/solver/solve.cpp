@@ -740,7 +740,6 @@ Eigen::MatrixXd Solver::pcgSolver(const MatXX &A, const VecX &b, int maxIter = -
 }
 
 /*Solve Hx = b, we can use PCG iterative method or use sparse Cholesky*/
-//TODO:使用PCG迭代而非SVD分解求解
 void Solver::solveLinearSystem() {
 //method1：直接求逆求解
 //    delta_x_ = Hessian_.inverse() * b_;
@@ -760,7 +759,15 @@ void Solver::solveLinearSystem() {
 
     //求Amm_solver^(-1)
     TicToc t_Amm_inv;
-    Eigen::MatrixXd Amm_inv_solver = Amm_solver.inverse();//SelfAdjointEigenSolver和直接求逆速度差不多
+    Eigen::MatrixXd Amm_inv_solver;
+//    Eigen::MatrixXd Amm_inv_solver = Amm_solver.inverse();//主要耗时在这里，9ms左右（共10ms）
+    /*ck分解*/
+//    Eigen::LLT<Eigen::MatrixXd> llt_Amm_solver(Amm_solver);     // Cholesky分解
+//    llt_Amm_solver.inverse().eval();
+
+    Eigen::LDLT<Eigen::MatrixXd> ldlt_Amm_solver(Amm_solver);
+    Amm_inv_solver = ldlt_Amm_solver.solve(Eigen::MatrixXd::Identity(Amm_solver.rows(), Amm_solver.cols())); //8.9ms左右
+
     ROS_DEBUG("\nt_Amm_inv cost: %f ms", t_Amm_inv.toc());
     Eigen::MatrixXd tmpA_solver = Arm_solver * Amm_inv_solver;
 
@@ -827,7 +834,7 @@ bool Solver::solve() {
         } else if(strategy_==2) {
             false_theshold_ = 10;
         } else if (strategy_==3) {
-            false_theshold_ = 6;
+            false_theshold_ = 4;//每轮最多尝试的次数
         }
         ROS_DEBUG("\nstrategy: %d, false_theshold_: %d", strategy_, false_theshold_);
         //保存LM阻尼阻尼系数lambda
@@ -862,7 +869,7 @@ fclose(tmp_fp);*/
 
                 // 优化退出条件1： delta_x_ 很小则退出 原来是1e-6
 
-                if (delta_x_.squaredNorm() <= 1e-10 || false_cnt > false_theshold_) {
+                if (delta_x_.squaredNorm() <= 1e-8 || false_cnt > false_theshold_) {
                     stop = true;
                     ROS_DEBUG("\ndelta_x too small: %e, or false_cnt=%d > 10  break", delta_x_.squaredNorm(), false_cnt);//都是在这出去的
                     break;
@@ -898,14 +905,14 @@ fclose(tmp_fp);*/
 //                }
 //                // 优化退出条件2： 如果残差 b_max 已经很小了，那就退出
 //                stop = (b_max <= 1e-12);
+                    ROS_DEBUG("\nLM step success false_cnt: %d will set 0", false_cnt);
                     false_cnt = 0;
                 } else {
                     false_cnt++;
                     TicToc t_rollbackStates;
                     rollbackStates();   // 误差没下降，回滚 0.05ms
-                    ROS_DEBUG("\nrollbackStates cost %f ms", t_rollbackStates.toc());
+                    ROS_DEBUG("\nrollbackStates cost %f ms, false_cnt: %d", t_rollbackStates.toc(), false_cnt);
                 }
-                ROS_DEBUG("\nfalse_cnt: %d", false_cnt);
             }
             iter++;
             // 优化退出条件3： currentChi_ 跟第一次的chi2相比，下降了 1e6 倍则退出
@@ -920,7 +927,7 @@ std::cout << "   makeHessian cost: " << t_hessian_cost_ << " ms" << std::endl;*/
     } else if(method_==kDOGLEG) {
         ROS_DEBUG("\nDL iter num: %d", iterations_);
         //1.初始化 radius，g=b=J^Te
-        radius_ = 1;
+        radius_ = 4;//原来是1
         epsilon_1_ = 1e-10;
         //向量无穷范数：cwiseAbs："coordinate-wise"（逐元素）取绝对值，colwise().sum()计算每行的绝对值之和，maxCoeff()得最大值
         bool use_last_hessian = true;
@@ -970,6 +977,7 @@ std::cout << "   makeHessian cost: " << t_hessian_cost_ << " ms" << std::endl;*/
             double tmp_2 = epsilon_2_*(x.norm() + epsilon_2_);
             stop_cond_1 = tmp_1 <= tmp_2;
             ROS_DEBUG("\ntmp_1: %f, tmp_2: %f, stop_cond_1: %d", tmp_1, tmp_2, stop_cond_1);
+            ROS_DEBUG_STREAM("\nx.norm(): " << x.norm() << ",   x: " << x.transpose());
             if(stop_cond_1) {//设为1e-12
                 stop = true;
             } else {
@@ -983,14 +991,15 @@ std::cout << "   makeHessian cost: " << t_hessian_cost_ << " ms" << std::endl;*/
                 if(rho > 0) {
                     //执行更新，即保存备份
                     backupStates();
+                    currentChi_ = tempChi;
                     preMakeHessian();
                     TicToc t_makeHessian;
                     makeHessian();
                     double makeHessian_finish_time = t_makeHessian.toc();
-                    makeHessian_time_sum_ += makeHessian_finish_time;
-                    ++makeHessian_times_;
+                    *makeHessian_time_sum_ += makeHessian_finish_time;
+                    ++(*makeHessian_times_);
                     ROS_DEBUG("\nmakeHessian cost: %f ms, avg_makeHessian_time: %f ms, makeHessian_time_sum_: %f, makeHessian_times_: %f",
-                              makeHessian_finish_time, makeHessian_time_sum_/makeHessian_times_, makeHessian_time_sum_, makeHessian_times_);
+                              makeHessian_finish_time, (*makeHessian_time_sum_)/(*makeHessian_times_), *makeHessian_time_sum_, *makeHessian_times_);
                     use_last_hessian = false;
                 } else {
                     rollbackStates();
@@ -1006,7 +1015,7 @@ std::cout << "   makeHessian cost: " << t_hessian_cost_ << " ms" << std::endl;*/
             }
             ROS_DEBUG("\nDL: radius_: %e, rho: %f, rho>0 = %d, currentChi_: %e, tempChi: %e, rho_numerator: %e, rho_denominator: %e",
                       radius_, rho, rho>0, currentChi_, tempChi, rho_numerator, rho_denominator);
-            ROS_DEBUG_STREAM("\ndelta_x_.squaredNorm(): " << delta_x_.squaredNorm() << ",  delta_x_: " << delta_x_.transpose()
+            ROS_DEBUG_STREAM("\ndelta_x_.squaredNorm(): " << delta_x_.squaredNorm() << "delta_x_.Norm(): " << delta_x_.norm() << ",  delta_x_: " << delta_x_.transpose()
                              << "\nb_.norm(): " << b_.norm() << ",  b_: " << b_.transpose());
             ++iter;
         }

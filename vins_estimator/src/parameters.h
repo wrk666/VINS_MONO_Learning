@@ -29,6 +29,8 @@ extern double BIAS_ACC_THRESHOLD;
 extern double BIAS_GYR_THRESHOLD;
 extern double SOLVER_TIME;
 extern int NUM_ITERATIONS;
+extern int LM_STRATEGY;
+extern std::string SOLVER_TYPE;
 extern std::string EX_CALIB_RESULT_PATH;
 extern std::string VINS_RESULT_PATH;
 extern std::string IMU_TOPIC;
