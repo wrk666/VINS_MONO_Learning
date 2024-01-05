@@ -155,4 +155,6 @@ class Estimator
 
     double makeHessian_time_sum_;
     double makeHessian_times_;
+    double pure_makeHessian_time_sum_;
+    double pure_makeHessian_times_;
 };

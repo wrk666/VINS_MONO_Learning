@@ -872,10 +872,13 @@ void Estimator::optimization()
     solver.iterations_ = NUM_ITERATIONS;
     solver.makeHessian_time_sum_ = &(makeHessian_time_sum_);
     solver.makeHessian_times_ = &makeHessian_times_;
+    solver.pure_makeHessian_time_sum_ = &(pure_makeHessian_time_sum_);
+    solver.pure_makeHessian_times_ = &pure_makeHessian_times_;
     if(solver.method_==solve::Solver::kDOGLEG) {
         solver.epsilon_1_ = 1e-10;
         solver.epsilon_2_ = 1e-6;//h_dl和radius_减小的倍数阈值
         solver.epsilon_3_ = 1e-10;
+        solver.init_radius_ = DL_INIT_RADIUS;
     }
 
 

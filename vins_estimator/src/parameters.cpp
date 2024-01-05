@@ -18,6 +18,8 @@ int ESTIMATE_EXTRINSIC;
 int ESTIMATE_TD;
 int ROLLING_SHUTTER;
 int LM_STRATEGY;
+double DL_INIT_RADIUS;
+std::string MULTI_THREAD;
 std::string SOLVER_TYPE;
 std::string EX_CALIB_RESULT_PATH;
 std::string VINS_RESULT_PATH;
@@ -69,8 +71,11 @@ void readParameters(ros::NodeHandle &n)
     MIN_PARALLAX = fsSettings["keyframe_parallax"];
     MIN_PARALLAX = MIN_PARALLAX / FOCAL_LENGTH;
 
+    DL_INIT_RADIUS = fsSettings["dl_init_radius"];
     fsSettings["solver_type"] >> SOLVER_TYPE;
     LM_STRATEGY = fsSettings["lm_strategy"];
+    fsSettings["multi_thread"] >> MULTI_THREAD;
+
     std::string OUTPUT_PATH;
     fsSettings["output_path"] >> OUTPUT_PATH;
     VINS_RESULT_PATH = OUTPUT_PATH + "/vins_result_no_loop.csv";

@@ -120,6 +120,7 @@ public:
 //    VecX delta_x_mm_;
 
     //DL参数
+    double init_radius_;
     double radius_;
     double epsilon_1_, epsilon_2_, epsilon_3_;
 //    double dl_alpha_;
@@ -143,6 +144,8 @@ public:
 
     double *makeHessian_time_sum_;//这个需要手撸才能统计时间，ceres无法统计
     double *makeHessian_times_;
+    double *pure_makeHessian_time_sum_;
+    double *pure_makeHessian_times_;
 
 private:
     bool get_cur_parameter(double* cur_x_array);

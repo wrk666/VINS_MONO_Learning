@@ -3,6 +3,7 @@
 //
 #include <iostream>
 #include <fstream>
+#include <omp.h>
 
 #include "solve.h"
 #include "../parameters.h"
@@ -334,41 +335,79 @@ ROS_INFO("summing up costs %f ms", t_summing.toc());*/
 
     //multi thread
     TicToc t_thread_summing;
-    pthread_t tids[NUM_THREADS];//4个线程构建
-    //携带每个线程的输入输出信息
-    ThreadsStruct threadsstruct[NUM_THREADS];
-    //将先验约束因子平均分配到4个线程中
-    int i = 0;
-    for (auto it : factors)
-    {
-        threadsstruct[i].sub_factors.push_back(it);
-        i++;
-        i = i % NUM_THREADS;
-    }
-    //将每个线程构建的A和b加起来
-    for (int i = 0; i < NUM_THREADS; i++)
-    {
-        TicToc zero_matrix;
-        threadsstruct[i].A = Eigen::MatrixXd::Zero(pos,pos);
-        threadsstruct[i].b = Eigen::VectorXd::Zero(pos);
-        threadsstruct[i].parameter_block_size = parameter_block_size;//marg里的block_size，4个线程共享
-        threadsstruct[i].parameter_block_idx = parameter_block_idx;
-        int ret = pthread_create( &tids[i], NULL, ThreadsConstructA ,(void*)&(threadsstruct[i]));//参数4是arg，void*类型，取其地址并强制类型转换
-        if (ret != 0)
+    ROS_DEBUG("\nmulti thread: %s", MULTI_THREAD.c_str());
+    if(MULTI_THREAD=="pthread") {
+        pthread_t tids[NUM_THREADS];//4个线程构建
+        //携带每个线程的输入输出信息
+        ThreadsStruct threadsstruct[NUM_THREADS];
+        //将先验约束因子平均分配到4个线程中
+        int i = 0;
+        for (auto it : factors)
         {
-            ROS_WARN("pthread_create error");
-            ROS_BREAK();
+            threadsstruct[i].sub_factors.push_back(it);
+            i++;
+            i = i % NUM_THREADS;
         }
+        //将每个线程构建的A和b加起来
+        for (int i = 0; i < NUM_THREADS; i++)
+        {
+            TicToc zero_matrix;
+            threadsstruct[i].A = Eigen::MatrixXd::Zero(pos,pos);
+            threadsstruct[i].b = Eigen::VectorXd::Zero(pos);
+            threadsstruct[i].parameter_block_size = parameter_block_size;//marg里的block_size，4个线程共享
+            threadsstruct[i].parameter_block_idx = parameter_block_idx;
+            int ret = pthread_create( &tids[i], NULL, ThreadsConstructA ,(void*)&(threadsstruct[i]));//参数4是arg，void*类型，取其地址并强制类型转换
+            if (ret != 0)
+            {
+                ROS_WARN("pthread_create error");
+                ROS_BREAK();
+            }
+        }
+        //将每个线程构建的A和b加起来
+        for( int i = NUM_THREADS - 1; i >= 0; i--)
+        {
+            pthread_join( tids[i], NULL );//阻塞等待线程完成，这里的A和b的+=操作在主线程中是阻塞的，+=的顺序是pthread_join的顺序
+            A += threadsstruct[i].A;
+            b += threadsstruct[i].b;
+        }
+    } else if(MULTI_THREAD=="openmp") {
+        //OpenMP多线程
+#pragma omp parallel for
+        for(size_t k = 0; k < factors.size(); ++k) { // for (auto it : factors){
+            ResidualBlockInfo* it = factors[k];
+            //J^T*J
+            for (int i = 0; i < static_cast<int>(it->parameter_blocks.size()); i++)
+            {
+                int idx_i = parameter_block_idx[reinterpret_cast<long>(it->parameter_blocks[i])];//要被marg的second=0
+                int size_i = localSize(parameter_block_size[reinterpret_cast<long>(it->parameter_blocks[i])]);
+                Eigen::MatrixXd jacobian_i = it->jacobians[i].leftCols(size_i);//remain变量的初始jacobian
+                for (int j = i; j < static_cast<int>(it->parameter_blocks.size()); j++)
+                {
+                    int idx_j = parameter_block_idx[reinterpret_cast<long>(it->parameter_blocks[j])];
+                    int size_j = localSize(parameter_block_size[reinterpret_cast<long>(it->parameter_blocks[j])]);
+                    Eigen::MatrixXd jacobian_j = it->jacobians[j].leftCols(size_j);//marg变量的初始jacobian
+                    //主对角线，注意这里是+=，可能之前别的变量在这个地方已经有过值了，所以要+=
+                    if (i == j)
+                        A.block(idx_i, idx_j, size_i, size_j) += jacobian_i.transpose() * jacobian_j;
+                        //非主对角线
+                    else
+                    {
+                        A.block(idx_i, idx_j, size_i, size_j) += jacobian_i.transpose() * jacobian_j;
+                        A.block(idx_j, idx_i, size_j, size_i) = A.block(idx_i, idx_j, size_i, size_j).transpose();
+                    }
+                }
+                b.segment(idx_i, size_i) += jacobian_i.transpose() * it->residuals;//J^T*e
+            }
+//            ROS_DEBUG("\nTotal number of threads: %d\n", omp_get_num_threads());
+        }
+
     }
-    //将每个线程构建的A和b加起来
-    for( int i = NUM_THREADS - 1; i >= 0; i--)
-    {
-        pthread_join( tids[i], NULL );//阻塞等待线程完成，这里的A和b的+=操作在主线程中是阻塞的，+=的顺序是pthread_join的顺序
-        A += threadsstruct[i].A;
-        b += threadsstruct[i].b;
-    }
-    //ROS_DEBUG("thread summing up costs %f ms", t_thread_summing.toc());
-    //ROS_INFO("A diff %f , b diff %f ", (A - tmp_A).sum(), (b - tmp_b).sum());
+    //统计multi thread makeHessian时间
+    double pure_finish_time = t_thread_summing.toc();
+    *pure_makeHessian_time_sum_ += pure_finish_time;
+    ++(*pure_makeHessian_times_);
+    ROS_DEBUG("\nt_thread_summing cost: %f ms, avg_pure_makeHessian_time: %f ms, pure_makeHessian_time_sum_: %f, pure_makeHessian_times_: %f",
+              t_thread_summing.toc(), (*pure_makeHessian_time_sum_)/(*pure_makeHessian_times_), *pure_makeHessian_time_sum_, *pure_makeHessian_times_);
 
     Hessian_ = A;
     b_ = -b;
@@ -922,13 +961,10 @@ fclose(tmp_fp);*/
             }
         }
         ROS_DEBUG("\nLM iterate %f ms", t_LM_iter.toc());
-/*    std::cout << "problem solve cost: " << t_solve.toc() << " ms" << std::endl;
-std::cout << "   makeHessian cost: " << t_hessian_cost_ << " ms" << std::endl;*/
     } else if(method_==kDOGLEG) {
         ROS_DEBUG("\nDL iter num: %d", iterations_);
         //1.初始化 radius，g=b=J^Te
-        radius_ = 4;//原来是1
-        epsilon_1_ = 1e-10;
+        radius_ = init_radius_;
         //向量无穷范数：cwiseAbs："coordinate-wise"（逐元素）取绝对值，colwise().sum()计算每行的绝对值之和，maxCoeff()得最大值
         bool use_last_hessian = true;
         bool stop = (linearized_residuals.lpNorm<Eigen::Infinity>() < epsilon_3_) ||

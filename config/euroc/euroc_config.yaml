@@ -3,10 +3,12 @@
 #common parameters
 imu_topic: "/imu0"
 image_topic: "/cam0/image_raw"
-output_path: "/home/wrk/File/SLAM/My_course/VIO/Output/MH_05/Ceres_LM/3_iter/" #输出文件的路径
+output_path: "/home/wrk/File/SLAM/My_course/VIO/Output/MH_05/MY_DL_test_multi_thread/openmp_iter_2_radius_4_fix_ex_repeat_4/" #输出文件的路径
 
-solver_type: "LM" #LM
+solver_type: "DOGLEG" #LM,DOGLEG
 lm_strategy: 3  #LM 阻尼因子更新策略，1，2，3可选
+dl_init_radius: 4.0  #DOGLEG初始化的初始tust region radius
+multi_thread: "pthread" #pthread, openmp, pthread_sse
 
 #camera calibration 
 model_type: PINHOLE
@@ -26,7 +28,7 @@ projection_parameters:
 
 # 选择是否需要外参Tbc标定，如果需要，则给出初始值（外参对VINS系统的精度影响还挺大）
 # Extrinsic parameter between IMU and Camera.
-estimate_extrinsic: 2   # 0  Have an accurate extrinsic parameters. We will trust the following imu^R_cam, imu^T_cam, don't change it.
+estimate_extrinsic: 1   # 0  Have an accurate extrinsic parameters. We will trust the following imu^R_cam, imu^T_cam, don't change it.
                         # 1  Have an initial guess about extrinsic parameters. We will optimize around your initial guess.
                         # 2  Don't know anything about extrinsic parameters. You don't need to give R,T. We will try to calibrate it. Do some rotation movement at beginning.                        
 #If you choose 0 or 1, you should write down the following matrix.
@@ -56,7 +58,7 @@ fisheye: 0              # if using fisheye, trun on it. A circle mask will be lo
 
 #optimization parameters
 max_solver_time: 0.04  # max solver itration time (ms), to guarantee real time 对最大solve时间和最大迭代次数进行限制，以保证实时性
-max_num_iterations: 3   # max solver itrations, to guarantee real time
+max_num_iterations: 2   # max solver itrations, to guarantee real time
 keyframe_parallax: 10.0 # keyframe selection threshold (pixel) 通过计算每一个点跟踪次数和它在次新帧和次次新帧间的视差确定是否是关键帧
 
 #imu parameters       The more accurate parameters you provide, the better performance

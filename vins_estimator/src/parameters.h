@@ -30,6 +30,8 @@ extern double BIAS_GYR_THRESHOLD;
 extern double SOLVER_TIME;
 extern int NUM_ITERATIONS;
 extern int LM_STRATEGY;
+extern double DL_INIT_RADIUS;
+extern std::string MULTI_THREAD;
 extern std::string SOLVER_TYPE;
 extern std::string EX_CALIB_RESULT_PATH;
 extern std::string VINS_RESULT_PATH;
