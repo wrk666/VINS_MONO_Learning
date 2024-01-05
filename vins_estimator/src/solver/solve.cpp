@@ -413,6 +413,9 @@ ROS_INFO("summing up costs %f ms", t_summing.toc());*/
     b_ = -b;
 
     //DOGLEG需反解出J和e
+    //TODO:忽然想到可能factor这种形式本身就无法构建出Jacobian，因为按时间来拿观测的话，同一时刻只会有一个观测向量，一个residual(由factor那几部分组成)，
+    // 求Jacobian本身就是需要residual对所有优化变量求导，但ceres的factor方法不按照时间来构建Jacobian，我也没什么思路
+    //Jacobian的构建方法不只有按照观测来构建，通常的Jacobian构建方法是遍历边(residual)，求出Jacobian
     if(method_==solve::Solver::kDOGLEG) {
         TicToc t_solve_J;
         TicToc t_SelfAdjoint;
@@ -611,7 +614,7 @@ void Solver::addLambdatoHessianLM() {
         if(strategy_==1) {
             Hessian_(i, i) += currentLambda_ * Hessian_(i, i); //理解: H(k+1) = H(k) + λ H(k) = (1+λ) H(k) 策略1
         } else if(strategy_==2 || strategy_==3) {
-            Hessian_(i, i) += currentLambda_;
+            Hessian_(i, i) += currentLambda_;//这里在Ceres中是跟Jacobian耦合来取的lambda，而不是仅仅通过H矩阵的最大值来取，这样数值稳定性会更好
         }
     }
 }
@@ -804,7 +807,7 @@ void Solver::solveLinearSystem() {
 //    Eigen::LLT<Eigen::MatrixXd> llt_Amm_solver(Amm_solver);     // Cholesky分解
 //    llt_Amm_solver.inverse().eval();
 
-    Eigen::LDLT<Eigen::MatrixXd> ldlt_Amm_solver(Amm_solver);
+    Eigen::LDLT<Eigen::MatrixXd> ldlt_Amm_solver(Amm_solver); //delta_bg = A.ldlt().solve(b);但这里b设为了Identity，GPT告诉我的
     Amm_inv_solver = ldlt_Amm_solver.solve(Eigen::MatrixXd::Identity(Amm_solver.rows(), Amm_solver.cols())); //8.9ms左右
 
     ROS_DEBUG("\nt_Amm_inv cost: %f ms", t_Amm_inv.toc());
