@@ -19,4 +19,5 @@ debug_build
 release_devel
 release_build
 build
+devel
 .idea
